@@ -1,0 +1,26 @@
+# Rust build outputs & machine-local cargo linker overrides
+/crush80-studio-rs/target/
+/crush80-studio-rs/.cargo/
+/crush80-studio-rs/link-stubs/
+*.pdb
+
+# Built executable & local firmware binaries (distribute via GitHub Releases)
+/Crush80_Studio.exe
+/*.bin
+/*.jsonl
+
+# Upstream firmware repo clone (clone separately)
+/wobkey-crush80-reboot-pro-firmware/
+
+# User local runtime data & backups
+/backup_stock.json
+/studio/
+
+# Python caches
+__pycache__/
+*.pyc
+.venv/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
