@@ -2,7 +2,7 @@
 
 A lightweight, pure-Rust native Windows desktop driver & custom firmware enhancement suite (**ProSuite v3**) for the **WOBKEY Crush 80 Pro Reboot (RGB)** mechanical keyboard (`VID: 0x320F`, `PID: 0x5055` USB Wired / `0x5088` 2.4G Wireless / Bluetooth BLE Battery).
 
-轻量级纯 Rust 原生 Windows 桌面驱动与固件增强套件（**ProSuite v3**），专为 **WOBKEY Crush 80 Pro Reboot (RGB)** 打造，单文件独立运行（~3.4 MB），零浏览器/Electron 依赖。
+ **WOBKEY Crush 80 Pro Reboot (RGB)** 的轻量级Window桌面驱动与固件增强套件（**ProSuite v3**），单文件独立运行（~3.4 MB）。
 
 ---
 
@@ -12,9 +12,6 @@ A lightweight, pure-Rust native Windows desktop driver & custom firmware enhance
   - Full 4-layer (`L0 Win` / `L1 Win Fn` / `L2 Mac` / `L3 Mac Fn`) live Flash remapping, including the `F13` AnyKey (`Matrix R4, C12`).
   - NativeHeld **Tap-Hold** visual builder: Mod-Tap (`MT`), Layer-Tap (`LT`), Chorded Modifiers, One-Shot Mods (`OSM`), One-Shot Layers (`OSL`), Caps Word, Grave Escape.
   - One-click **Restore Key** / **Restore Layer** to factory defaults.
-- **Bi-Directional Live Hardware Sync / 硬件双向实时同步**
-  - Physical `Fn` shortcuts on the keyboard (backlight mode/brightness/speed, Logo RGB, Side Underglow RGB, WinLock, Win/Mac OS mode, Low-Latency ISR Debounce) reflect live in the UI within 1 second.
-  - True **Rainbow vs. Static Color** toggle (`CONFIG[5]`), Logo & Side RGB controls, and **Dynamic Tap-Hold Tapping Term** (`100–300 ms`, `CONFIG[60]`).
 - **Tri-Mode Support & True Battery Telemetry / 三模适配与真实电量显示**
   - **USB Wired (`0x5055`) & 2.4G Wireless (`0x5088`)**: full VIA control + real hardware battery percentage (`gp+0x10C`) in sidebar & system tray hover tooltip, with hotplug auto-reconnect.
   - **Bluetooth Mode**: automatic Windows BLE Battery Service (`DEVPKEY_Bluetooth_Battery`) detection & battery readout in sidebar and tray tooltip.
