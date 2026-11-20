@@ -1,5 +1,9 @@
 # Crush 80 Studio
 
+[![Build & Release](https://github.com/OyatsuSuki/crush80-studio/actions/workflows/ci-release.yml/badge.svg)](https://github.com/OyatsuSuki/crush80-studio/actions/workflows/ci-release.yml)
+[![Latest Release](https://img.shields.io/github/v/release/OyatsuSuki/crush80-studio)](https://github.com/OyatsuSuki/crush80-studio/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-amber.svg)](LICENSE)
+
 A lightweight, pure-Rust native Windows desktop driver & custom firmware enhancement suite (**ProSuite v3**) for the **WOBKEY Crush 80 Pro Reboot (RGB)** mechanical keyboard (`VID: 0x320F`, `PID: 0x5055` USB Wired / `0x5088` 2.4G Wireless / Bluetooth BLE Battery).
 
  **WOBKEY Crush 80 Pro Reboot (RGB)** 的轻量级Window桌面驱动与固件增强套件（**ProSuite v3**），单文件独立运行（~3.4 MB）。

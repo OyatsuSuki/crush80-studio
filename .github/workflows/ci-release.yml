@@ -1,0 +1,54 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crush80-studio-rs/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('crush80-studio-rs/Cargo.lock') }}
+
+      - name: Build Crush 80 Studio (Release)
+        working-directory: crush80-studio-rs
+        run: cargo build --release
+
+      - name: Stage executable & embed Windows icon
+        shell: pwsh
+        run: |
+          Copy-Item -Force crush80-studio-rs\target\release\crush80-studio.exe Crush80_Studio.exe
+          python -m pip install --quiet pillow
+          python embed_icon.py
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Crush80_Studio-windows-x64
+          path: Crush80_Studio.exe
+
+      - name: Publish to GitHub Release on tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Crush80_Studio.exe
+          generate_release_notes: true
