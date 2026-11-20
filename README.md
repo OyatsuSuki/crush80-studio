@@ -8,6 +8,21 @@ A lightweight, pure-Rust native Windows desktop driver & custom firmware enhance
 
  **WOBKEY Crush 80 Pro Reboot (RGB)** 的轻量级Window桌面驱动与固件增强套件（**ProSuite v3**），单文件独立运行（~3.4 MB）。
 
+<p align="center">
+  <img src="docs/screenshot-keymap.png" alt="Keymap & Tap-Hold Editor" width="100%" />
+</p>
+
+<details>
+<summary>More Screenshots / 更多界面预览（性能与氛围灯 · 按键测试器）</summary>
+
+<p align="center">
+  <img src="docs/screenshot-hardware.png" alt="Hardware & Ambient Lighting" width="100%" />
+  <br />
+  <img src="docs/screenshot-tester.png" alt="Key Tester & Chatter Detector" width="100%" />
+</p>
+
+</details>
+
 ---
 
 ## Features / 核心功能

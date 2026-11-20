@@ -149,6 +149,11 @@ struct Crush80App {
     // Toast
     toast: String,
     toast_is_err: bool,
+    // Optional CLI screenshot capture (--capture-dir <dir>)
+    capture_dir: Option<PathBuf>,
+    capture_step: usize,
+    capture_wait_frames: u8,
+    capture_inflight: bool,
 }
 
 fn load_lang(path: &PathBuf) -> Lang {
@@ -365,6 +370,19 @@ impl Crush80App {
             ota_was_running: false,
             toast: String::new(),
             toast_is_err: false,
+            capture_dir: {
+                let mut args = std::env::args().skip(1);
+                let mut dir = None;
+                while let Some(a) = args.next() {
+                    if a == "--capture-dir" {
+                        dir = args.next().map(PathBuf::from);
+                    }
+                }
+                dir
+            },
+            capture_step: 0,
+            capture_wait_frames: 6,
+            capture_inflight: false,
         };
         app.refresh_all();
         app
@@ -607,6 +625,52 @@ impl eframe::App for Crush80App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+
+        // Optional built-in OpenGL framebuffer screenshot capture (--capture-dir <dir>)
+        if let Some(dir) = self.capture_dir.clone() {
+            let shots: &[(NavTab, &str)] = &[
+                (NavTab::Keymap, "screenshot-keymap.raw"),
+                (NavTab::Hardware, "screenshot-hardware.raw"),
+                (NavTab::Tester, "screenshot-tester.raw"),
+            ];
+            let got_img = ctx.input(|i| {
+                i.events.iter().find_map(|ev| match ev {
+                    egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                    _ => None,
+                })
+            });
+            if let Some(img) = got_img {
+                if self.capture_step < shots.len() {
+                    let _ = std::fs::create_dir_all(&dir);
+                    let w = img.size[0] as u32;
+                    let h = img.size[1] as u32;
+                    let mut raw = Vec::with_capacity(8 + img.pixels.len() * 4);
+                    raw.extend_from_slice(&w.to_le_bytes());
+                    raw.extend_from_slice(&h.to_le_bytes());
+                    for c in &img.pixels {
+                        raw.extend_from_slice(&c.to_array());
+                    }
+                    let _ = std::fs::write(dir.join(shots[self.capture_step].1), raw);
+                    self.capture_step += 1;
+                    self.capture_inflight = false;
+                    self.capture_wait_frames = 5;
+                    if self.capture_step < shots.len() {
+                        self.tab = shots[self.capture_step].0;
+                    } else {
+                        std::process::exit(0);
+                    }
+                }
+            } else if self.capture_step < shots.len() {
+                self.tab = shots[self.capture_step].0;
+                if self.capture_wait_frames > 0 {
+                    self.capture_wait_frames -= 1;
+                } else if !self.capture_inflight {
+                    self.capture_inflight = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
+                }
+            }
+            ctx.request_repaint();
         }
 
         // 2. Track OTA completion even when user navigates away
