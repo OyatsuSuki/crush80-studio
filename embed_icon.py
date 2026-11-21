@@ -14,7 +14,6 @@ import time
 from PIL import Image, ImageDraw, ImageFilter
 
 ROOT = Path(__file__).resolve().parent
-SRC_JPG = Path(r"C:\Users\Oyatsu\.gemini\antigravity\brain\ce1421d9-5691-4ffc-8115-e325ae5176a4\crush_80_studio_icon_v2_1795147712003.jpg")
 PNG_OUT = ROOT / "crush80_icon.png"
 ICO_OUT = ROOT / "crush80.ico"
 RGBA64_OUT = ROOT / "crush80-studio-rs" / "assets" / "icon_64.rgba"
@@ -127,13 +126,12 @@ def embed_into_exe(exe_path: Path, images: list[tuple[int, bytes]]):
 
 
 if __name__ == "__main__":
-    master = prepare_master_rgba(SRC_JPG)
-    master.resize((256, 256), Image.Resampling.LANCZOS).save(PNG_OUT)
+    master = Image.open(PNG_OUT).convert("RGBA")
     RGBA64_OUT.parent.mkdir(parents=True, exist_ok=True)
     RGBA64_OUT.write_bytes(master.resize((64, 64), Image.Resampling.LANCZOS).tobytes())
     ico_bytes, images = build_ico_from_master(master)
     ICO_OUT.write_bytes(ico_bytes)
-    print(f"Saved {PNG_OUT}, {ICO_OUT} ({len(ico_bytes)} bytes), and {RGBA64_OUT}")
+    print(f"Prepared {ICO_OUT} ({len(ico_bytes)} bytes) and {RGBA64_OUT} from {PNG_OUT}")
     if EXE_PATH.exists():
         embed_into_exe(EXE_PATH, images)
         print(f"Embedded studio icon into {EXE_PATH}!")
