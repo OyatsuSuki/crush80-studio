@@ -2648,10 +2648,10 @@ impl Crush80App {
                 }
 
                 if let Some(ember_path) = find_bundled_firmware(&[
+                    "Crush80-RGB-Ember-v1.1.0.bin",
+                    r"Crush80Driver\Crush80-RGB-Ember-v1.1.0.bin",
                     "Crush80-RGB-Ember.bin",
                     r"Crush80Driver\Crush80-RGB-Ember.bin",
-                    "Crush80-RGB-0108-NativeHeld-v130-ProSuite.bin",
-                    r"Crush80Driver\Crush80-RGB-0108-NativeHeld-v130-ProSuite.bin",
                 ]) {
                     if chip_button(ui, s.ota_prosuite_btn, false) {
                         self.load_ota_file(ember_path);

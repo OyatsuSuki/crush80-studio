@@ -24,7 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT / "wobkey-crush80-reboot-pro-firmware"
 SRC_BIN = REPO / "firmware/patched/Crush80-RGB-0108-NativeHeld-20261101.bin"
-OUT_BIN = ROOT / "Crush80-RGB-Ember.bin"
+OUT_BIN = ROOT / "Crush80-RGB-Ember-v1.1.0.bin"
 
 EXPECTED_SRC_SHA256 = "3b6c6755b1a3b263d6e55c2a4415d7e91689ac43f897b3be970b236ef970de3a"
 
