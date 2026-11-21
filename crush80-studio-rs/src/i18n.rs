@@ -149,6 +149,14 @@ pub struct Strings {
     pub tray_show: &'static str,
     pub tray_quit: &'static str,
     pub minimized_tray: &'static str,
+    // Board Edition (Pro RGB vs Lite Non-RGB)
+    pub edition_pro: &'static str,
+    pub edition_lite: &'static str,
+    pub nav_logo_light: &'static str,
+    pub logo_rgb_title: &'static str,
+    pub logo_rgb_sub: &'static str,
+    pub prosuite_required_hint: &'static str,
+    pub ota_norgb_blocked: &'static str,
 }
 
 pub fn tr(lang: Lang) -> &'static Strings {
@@ -284,6 +292,13 @@ static ZH: Strings = Strings {
     tray_show: "显示主窗口",
     tray_quit: "彻底退出",
     minimized_tray: "已最小化至系统托盘运行",
+    edition_pro: "Pro RGB",
+    edition_lite: "无光版",
+    nav_logo_light: "徽章灯效",
+    logo_rgb_title: "徽章灯效控制",
+    logo_rgb_sub: "无光版专属 · 控制正面灯条的 5 种灯效与颜色",
+    prosuite_required_hint: "当前为原厂固件（无光版或未刷 ProSuite），下方底层寄存器开关仅在 ProSuite 固件下可用，开机自启照常生效。",
+    ota_norgb_blocked: "安全保护已锁定：当前为无光版（Lite），禁止刷入 Pro RGB 固件以免键盘变砖。",
 };
 
 static EN: Strings = Strings {
@@ -411,6 +426,13 @@ static EN: Strings = Strings {
     tray_show: "Show Window",
     tray_quit: "Quit",
     minimized_tray: "Minimized to system tray",
+    edition_pro: "Pro RGB",
+    edition_lite: "Lite Non-RGB",
+    nav_logo_light: "Logo Light",
+    logo_rgb_title: "Logo Strip Lighting",
+    logo_rgb_sub: "Crush 80 Non-RGB · Control the 5 front badge effects & color",
+    prosuite_required_hint: "Stock firmware detected (Non-RGB or non-ProSuite). Low-level hardware register switches require ProSuite firmware; Windows Auto-Start works normally.",
+    ota_norgb_blocked: "Safety Lock: Crush 80 Non-RGB (Lite) detected. Flashing Pro RGB firmware is blocked to prevent bricking.",
 };
 
 static JA: Strings = Strings {
@@ -538,7 +560,28 @@ static JA: Strings = Strings {
     tray_show: "ウィンドウを表示",
     tray_quit: "終了",
     minimized_tray: "タスクトレイに格納しました",
+    edition_pro: "Pro RGB",
+    edition_lite: "無光版",
+    nav_logo_light: "ロゴライト",
+    logo_rgb_title: "ロゴライト制御",
+    logo_rgb_sub: "無光版専用・前面ロゴバーの 5 モードとカラーを設定",
+    prosuite_required_hint: "純正ファームウェア（無光版または ProSuite 未導入）のため、底層レジスタ設定は ProSuite 環境でのみ利用可能です。自動起動は通常通り動作します。",
+    ota_norgb_blocked: "安全ロック：Crush 80 無光版（Lite）を検出しました。故障防止のため Pro RGB ファームウェアの書き込みを禁止しています。",
 };
+
+pub fn norgb_effect_label(lang: Lang, id: u8) -> &'static str {
+    match lang {
+        Lang::Zh => match id {
+            0 => "关闭灯效", 1 => "彩虹波浪", 2 => "呼吸模式", 3 => "混彩渐变", 4 => "纯色常亮", _ => "未知",
+        },
+        Lang::En => match id {
+            0 => "Off", 1 => "Rainbow Wave", 2 => "Breathing", 3 => "Spectrum Cycle", 4 => "Static", _ => "Unknown",
+        },
+        Lang::Ja => match id {
+            0 => "消灯", 1 => "レインボーウェーブ", 2 => "ブリージング", 3 => "スペクトラム", 4 => "常時点灯", _ => "不明",
+        },
+    }
+}
 
 pub fn rgb_effect_label(lang: Lang, id: u8) -> &'static str {
     match lang {

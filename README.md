@@ -4,9 +4,9 @@
 [![Latest Release](https://img.shields.io/github/v/release/OyatsuSuki/crush80-studio)](https://github.com/OyatsuSuki/crush80-studio/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-amber.svg)](LICENSE)
 
-A lightweight, pure-Rust native Windows desktop driver & custom firmware enhancement suite (**ProSuite v3**) for the **WOBKEY Crush 80 Pro Reboot (RGB)** mechanical keyboard (`VID: 0x320F`, `PID: 0x5055` USB Wired / `0x5088` 2.4G Wireless / Bluetooth BLE Battery).
+A lightweight, pure-Rust native Windows desktop driver & custom firmware enhancement suite (**ProSuite v3**) for both **WOBKEY Crush 80 Pro (RGB)** and **Crush 80 Lite / Standard (Non-RGB)** mechanical keyboards (`VID: 0x320F`, `PID: 0x5055` USB Wired / `0x5088` 2.4G Wireless / Bluetooth BLE Battery).
 
- **WOBKEY Crush 80 Pro Reboot (RGB)** 的轻量级Window桌面驱动与固件增强套件（**ProSuite v3**），单文件独立运行（~3.4 MB）。
+**WOBKEY Crush 80 Pro（RGB 版）& Lite / 标准版（无光版）** 通用轻量级 Windows 原生桌面驱动与固件增强套件（**ProSuite v3**），单文件独立运行（~3.4 MB），自动识别 PCB 版本。
 
 <p align="center">
   <img src="docs/screenshot-keymap.png" alt="Keymap & Tap-Hold Editor" width="100%" />
@@ -27,6 +27,9 @@ A lightweight, pure-Rust native Windows desktop driver & custom firmware enhance
 
 ## Features / 核心功能
 
+- **Unified Pro RGB & Lite Non-RGB Support / RGB 版与无光版双版本通吃**
+  - Automatic matrix detection between **Pro RGB** and **Lite Non-RGB** (plus manual `Pro RGB / 无光版` sidebar switch).
+  - Exact Non-RGB PCB matrix mapping (`F13` @ `4,13`, `RShift` @ `4,12`, `Space` @ `5,6`, `Menu/RWin` @ `5,8`), official Non-RGB custom keycodes (`0x7F00..0x7F0C`), 5-mode front Logo Strip lighting control (`0..4`), and built-in **anti-brick OTA safety lock** blocking Pro RGB firmware flashes on Non-RGB boards.
 - **88-Key F13 Digital-Twin Keymap Editor / 88 键 F13 数字孪生键位映射**
   - Full 4-layer (`L0 Win` / `L1 Win Fn` / `L2 Mac` / `L3 Mac Fn`) live Flash remapping, including the `F13` AnyKey (`Matrix R4, C12`).
   - NativeHeld **Tap-Hold** visual builder: Mod-Tap (`MT`), Layer-Tap (`LT`), Chorded Modifiers, One-Shot Mods (`OSM`), One-Shot Layers (`OSL`), Caps Word, Grave Escape.

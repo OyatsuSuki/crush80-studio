@@ -1,3 +1,17 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BoardEdition {
+    ProRgb,
+    LiteNoRgb,
+}
+
+impl Default for BoardEdition {
+    fn default() -> Self {
+        BoardEdition::ProRgb
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyCategory {
     Basic,
@@ -89,6 +103,34 @@ pub const SPECIAL_KEYCODES: &[(u16, &str, &str)] = &[
     (0x7F0C, "WOB_SPWR", "侧灯开"), (0x7F0D, "WOB_SCAN", "低延迟"),
     (0x7F0E, "WOB_RGBP", "总灯开"), (0x7F0F, "WOB_BATT", "电量"),
 ];
+
+/// Exact custom keycode table from official Crush 80 Non-RGB (Lite) VIA JSON.
+/// Note: 0x7F07..0x7F0C differ from Pro RGB because side-light codes are absent.
+pub const SPECIAL_KEYCODES_NORGB: &[(u16, &str, &str)] = &[
+    (0x7820, "RGB_TOG", "灯开关"), (0x7821, "RGB_MOD", "灯效+"), (0x7822, "RGB_RMOD", "灯效-"),
+    (0x7823, "RGB_HUI", "色相+"), (0x7824, "RGB_HUD", "色相-"),
+    (0x7825, "RGB_SAI", "饱和+"), (0x7826, "RGB_SAD", "饱和-"),
+    (0x7827, "RGB_VAI", "亮度+"), (0x7828, "RGB_VAD", "亮度-"),
+    (0x7829, "RGB_SPI", "速度+"), (0x782A, "RGB_SPD", "速度-"),
+    (0x7C00, "QK_BOOT", "重置"), (0x7C01, "DB_TOGG", "调试"),
+    (0x7C02, "EE_CLR", "清配置"), (0x7C03, "QK_RBT", "重启"),
+    (0xFFFF, "KC_TRNS", "▽"),
+    (0x7C16, "KC_GESC", "Esc/~"), (0x5C16, "KC_GESC", "Esc/~"), (0x7C73, "CW_TOGG", "CapsW"),
+    (0x7F00, "WOB_24G", "2.4G"), (0x7F01, "WOB_BT1", "BT 1"),
+    (0x7F02, "WOB_BT2", "BT 2"), (0x7F03, "WOB_BT3", "BT 3"),
+    (0x7F04, "WOB_MODE", "三模切"), (0x7F05, "WOB_WINL", "锁Win"),
+    (0x7F06, "WOB_OS", "Win/Mac"), (0x7F07, "WOB_SCAN", "低延迟"),
+    (0x7F08, "WOB_LMOD", "Logo效"), (0x7F09, "WOB_LCOL", "Logo色"),
+    (0x7F0A, "WOB_LPWR", "Logo灯"), (0x7F0B, "WOB_RGBP", "总灯开"),
+    (0x7F0C, "WOB_BATT", "电量"),
+];
+
+pub fn special_keycodes_for(edition: BoardEdition) -> &'static [(u16, &'static str, &'static str)] {
+    match edition {
+        BoardEdition::ProRgb => SPECIAL_KEYCODES,
+        BoardEdition::LiteNoRgb => SPECIAL_KEYCODES_NORGB,
+    }
+}
 
 pub const RGB_EFFECTS: &[(u8, &str)] = &[
     (0, "00 · 关闭背光"),
@@ -241,20 +283,55 @@ fn format_mods(mods5: u8) -> String {
     if mods5 & 0x10 != 0 { format!("R{}", joined) } else { joined }
 }
 
+fn localized_norgb_wob_label(code: u16, lang: crate::i18n::Lang) -> Option<&'static str> {
+    use crate::i18n::Lang;
+    match lang {
+        Lang::Zh => None,
+        Lang::En => match code {
+            0x7F07 => Some("LoLat"),
+            0x7F08 => Some("LogoM"),
+            0x7F09 => Some("LogoC"),
+            0x7F0A => Some("Logo"),
+            0x7F0B => Some("AllLED"),
+            0x7F0C => Some("Batt"),
+            _ => None,
+        },
+        Lang::Ja => match code {
+            0x7F07 => Some("低遅延"),
+            0x7F08 => Some("ロゴ効"),
+            0x7F09 => Some("ロゴ色"),
+            0x7F0A => Some("ロゴ灯"),
+            0x7F0B => Some("全灯切"),
+            0x7F0C => Some("電池"),
+            _ => None,
+        },
+    }
+}
+
 pub fn decode_keycode(code: u16) -> DecodedKey {
-    decode_keycode_lang(code, crate::i18n::Lang::Zh)
+    decode_keycode_for(code, crate::i18n::Lang::Zh, BoardEdition::ProRgb)
 }
 
 pub fn decode_keycode_lang(code: u16, lang: crate::i18n::Lang) -> DecodedKey {
+    decode_keycode_for(code, lang, BoardEdition::ProRgb)
+}
+
+pub fn decode_keycode_for(code: u16, lang: crate::i18n::Lang, edition: BoardEdition) -> DecodedKey {
     for &(c, n, l) in BASIC_KEYCODES {
         if c == code {
             let lbl = localized_label(code, lang).unwrap_or(l);
             return DecodedKey { code, name: n.into(), label: lbl.into(), category: KeyCategory::Basic };
         }
     }
-    for &(c, n, l) in SPECIAL_KEYCODES {
+    for &(c, n, l) in special_keycodes_for(edition) {
         if c == code {
-            let lbl = localized_label(code, lang).unwrap_or(l);
+            let lbl = if edition == BoardEdition::LiteNoRgb {
+                localized_norgb_wob_label(code, lang)
+                    .or_else(|| if (0x7F07..=0x7F0F).contains(&code) { None } else { localized_label(code, lang) })
+                    .unwrap_or(l)
+            } else {
+                localized_label(code, lang).unwrap_or(l)
+            };
             return DecodedKey { code, name: n.into(), label: lbl.into(), category: KeyCategory::Special };
         }
     }
@@ -357,11 +434,84 @@ pub const FACTORY_KEYMAP: [[u16; 128]; 4] = [
 ];
 
 pub fn factory_default_key(layer: usize, row: u8, col: u8) -> u16 {
+    factory_default_key_for(BoardEdition::ProRgb, layer, row, col)
+}
+
+pub fn factory_default_key_for(edition: BoardEdition, layer: usize, row: u8, col: u8) -> u16 {
+    if layer >= 4 || row >= 8 || col >= 16 {
+        return 0;
+    }
+    if edition == BoardEdition::LiteNoRgb {
+        // Account for the 4 swapped matrix coordinates in official Crush 80 Non-RGB PCB:
+        // (4,12)=RShift, (4,13)=F13(Mute), (5,6)=Space/Batt, (5,8)=Menu(RWin), (5,11)=unused
+        let (src_r, src_c) = match (row, col) {
+            (4, 12) => (4, 13),
+            (4, 13) => (4, 12),
+            (5, 6) => (5, 5),
+            (5, 8) => (5, 11),
+            (5, 11) => return 0x0000,
+            other => other,
+        };
+        let kc = FACTORY_KEYMAP[layer][(src_r as usize) * 16 + (src_c as usize)];
+        // Map Pro RGB custom codes (0x7F07..0x7F0F) to official Non-RGB codes (0x7F07..0x7F0C)
+        return match kc {
+            0x7F07 => 0x7F08, // LOMODE
+            0x7F08 => 0x7F09, // LOCOLOUR
+            0x7F09 => 0x7F0A, // LOPOWER
+            0x7F0A | 0x7F0B | 0x7F0C => 0x0001, // Side RGB absent on Non-RGB -> KC_TRNS
+            0x7F0D => 0x7F07, // KSDELAY
+            0x7F0E => 0x7F0B, // SYSPOWER
+            0x7F0F => 0x7F0C, // BATTST
+            other => other,
+        };
+    }
     let idx = (row as usize) * 16 + (col as usize);
-    if layer < 4 && idx < 128 {
-        FACTORY_KEYMAP[layer][idx]
+    FACTORY_KEYMAP[layer][idx]
+}
+
+/// Auto-detects Crush 80 Pro (RGB) vs Lite (Non-RGB) from the live Layer 0 keymap matrix.
+/// On Pro RGB: (4,13)=KC_RSFT(0x00E5), (5,5)=KC_SPC(0x002C), (5,6)=0x0000.
+/// On Lite Non-RGB: (4,12)=KC_RSFT(0x00E5), (5,6)=KC_SPC(0x002C).
+pub fn detect_edition_from_keymap(layers: &[[u16; 128]; 4]) -> Option<BoardEdition> {
+    let l0 = &layers[0];
+    let r4c12 = l0[4 * 16 + 12];
+    let r4c13 = l0[4 * 16 + 13];
+    let r5c5 = l0[5 * 16 + 5];
+    let r5c6 = l0[5 * 16 + 6];
+    let l1 = &layers[1];
+
+    let mut norgb_score = 0i32;
+    let mut rgb_score = 0i32;
+
+    if r4c12 == 0x00E5 { norgb_score += 3; }
+    if r4c13 == 0x00E5 { rgb_score += 3; }
+    if r5c6 == 0x002C { norgb_score += 3; }
+    if r5c5 == 0x002C && r5c6 == 0x0000 { rgb_score += 3; }
+    // On Pro RGB L1, 0x7F0D/0x7F0E/0x7F0F exist; on Non-RGB, max custom code is 0x7F0C
+    if l1.iter().any(|&c| (0x7F0D..=0x7F0F).contains(&c)) {
+        rgb_score += 2;
+    }
+
+    if norgb_score > rgb_score && norgb_score >= 3 {
+        Some(BoardEdition::LiteNoRgb)
+    } else if rgb_score > norgb_score && rgb_score >= 3 {
+        Some(BoardEdition::ProRgb)
     } else {
-        0
+        None
+    }
+}
+
+pub fn f13_matrix(edition: BoardEdition) -> (u8, u8) {
+    match edition {
+        BoardEdition::ProRgb => (4, 12),
+        BoardEdition::LiteNoRgb => (4, 13),
+    }
+}
+
+pub fn layout_for(edition: BoardEdition) -> &'static [PhysicalKey] {
+    match edition {
+        BoardEdition::ProRgb => CRUSH80_LAYOUT,
+        BoardEdition::LiteNoRgb => CRUSH80_LAYOUT_NORGB,
     }
 }
 
@@ -456,6 +606,105 @@ pub const CRUSH80_LAYOUT: &[PhysicalKey] = &[
     PhysicalKey { r: 5, c: 9, x: 10.0, y: 5.25, w: 1.25, style: 1 },
     PhysicalKey { r: 5, c: 10, x: 11.25, y: 5.25, w: 1.25, style: 1 },
     PhysicalKey { r: 5, c: 11, x: 12.5, y: 5.25, w: 1.25, style: 1 },
+    PhysicalKey { r: 5, c: 12, x: 13.75, y: 5.25, w: 1.25, style: 1 },
+    PhysicalKey { r: 5, c: 13, x: 15.25, y: 5.25, w: 1.0, style: 1 },
+    PhysicalKey { r: 5, c: 14, x: 16.25, y: 5.25, w: 1.0, style: 1 },
+    PhysicalKey { r: 5, c: 15, x: 17.25, y: 5.25, w: 1.0, style: 1 },
+];
+
+/// Exact 88-key F13 TKL layout for official Crush 80 Non-RGB (Lite) PCB:
+/// F13=(4,13), RShift=(4,12), Space=(5,6), Menu/RWin=(5,8).
+pub const CRUSH80_LAYOUT_NORGB: &[PhysicalKey] = &[
+    // Row 0
+    PhysicalKey { r: 0, c: 0, x: 0.0, y: 0.0, w: 1.0, style: 2 },
+    PhysicalKey { r: 0, c: 1, x: 1.25, y: 0.0, w: 1.0, style: 1 },
+    PhysicalKey { r: 0, c: 2, x: 2.25, y: 0.0, w: 1.0, style: 1 },
+    PhysicalKey { r: 0, c: 3, x: 3.25, y: 0.0, w: 1.0, style: 1 },
+    PhysicalKey { r: 0, c: 4, x: 4.25, y: 0.0, w: 1.0, style: 1 },
+    PhysicalKey { r: 0, c: 5, x: 5.5, y: 0.0, w: 1.0, style: 0 },
+    PhysicalKey { r: 0, c: 6, x: 6.5, y: 0.0, w: 1.0, style: 0 },
+    PhysicalKey { r: 0, c: 7, x: 7.5, y: 0.0, w: 1.0, style: 0 },
+    PhysicalKey { r: 0, c: 8, x: 8.5, y: 0.0, w: 1.0, style: 0 },
+    PhysicalKey { r: 0, c: 9, x: 9.75, y: 0.0, w: 1.0, style: 1 },
+    PhysicalKey { r: 0, c: 10, x: 10.75, y: 0.0, w: 1.0, style: 1 },
+    PhysicalKey { r: 0, c: 11, x: 11.75, y: 0.0, w: 1.0, style: 1 },
+    PhysicalKey { r: 0, c: 12, x: 12.75, y: 0.0, w: 1.0, style: 1 },
+    PhysicalKey { r: 4, c: 13, x: 14.0, y: 0.0, w: 1.0, style: 2 }, // F13 AnyKey @ Matrix 4,13
+    PhysicalKey { r: 0, c: 13, x: 15.25, y: 0.0, w: 1.0, style: 1 },
+    PhysicalKey { r: 0, c: 14, x: 16.25, y: 0.0, w: 1.0, style: 1 },
+    PhysicalKey { r: 0, c: 15, x: 17.25, y: 0.0, w: 1.0, style: 1 },
+    // Row 1
+    PhysicalKey { r: 1, c: 0, x: 0.0, y: 1.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 1, c: 1, x: 1.0, y: 1.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 1, c: 2, x: 2.0, y: 1.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 1, c: 3, x: 3.0, y: 1.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 1, c: 4, x: 4.0, y: 1.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 1, c: 5, x: 5.0, y: 1.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 1, c: 6, x: 6.0, y: 1.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 1, c: 7, x: 7.0, y: 1.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 1, c: 8, x: 8.0, y: 1.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 1, c: 9, x: 9.0, y: 1.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 1, c: 10, x: 10.0, y: 1.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 1, c: 11, x: 11.0, y: 1.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 1, c: 12, x: 12.0, y: 1.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 1, c: 13, x: 13.0, y: 1.25, w: 2.0, style: 1 },
+    PhysicalKey { r: 1, c: 14, x: 15.25, y: 1.25, w: 1.0, style: 1 },
+    PhysicalKey { r: 1, c: 15, x: 16.25, y: 1.25, w: 1.0, style: 1 },
+    PhysicalKey { r: 3, c: 14, x: 17.25, y: 1.25, w: 1.0, style: 1 },
+    // Row 2
+    PhysicalKey { r: 2, c: 0, x: 0.0, y: 2.25, w: 1.5, style: 1 },
+    PhysicalKey { r: 2, c: 1, x: 1.5, y: 2.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 2, c: 2, x: 2.5, y: 2.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 2, c: 3, x: 3.5, y: 2.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 2, c: 4, x: 4.5, y: 2.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 2, c: 5, x: 5.5, y: 2.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 2, c: 6, x: 6.5, y: 2.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 2, c: 7, x: 7.5, y: 2.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 2, c: 8, x: 8.5, y: 2.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 2, c: 9, x: 9.5, y: 2.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 2, c: 10, x: 10.5, y: 2.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 2, c: 11, x: 11.5, y: 2.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 2, c: 12, x: 12.5, y: 2.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 2, c: 13, x: 13.5, y: 2.25, w: 1.5, style: 1 },
+    PhysicalKey { r: 2, c: 14, x: 15.25, y: 2.25, w: 1.0, style: 1 },
+    PhysicalKey { r: 2, c: 15, x: 16.25, y: 2.25, w: 1.0, style: 1 },
+    PhysicalKey { r: 3, c: 15, x: 17.25, y: 2.25, w: 1.0, style: 1 },
+    // Row 3
+    PhysicalKey { r: 3, c: 0, x: 0.0, y: 3.25, w: 1.75, style: 1 },
+    PhysicalKey { r: 3, c: 1, x: 1.75, y: 3.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 3, c: 2, x: 2.75, y: 3.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 3, c: 3, x: 3.75, y: 3.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 3, c: 4, x: 4.75, y: 3.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 3, c: 5, x: 5.75, y: 3.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 3, c: 6, x: 6.75, y: 3.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 3, c: 7, x: 7.75, y: 3.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 3, c: 8, x: 8.75, y: 3.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 3, c: 9, x: 9.75, y: 3.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 3, c: 10, x: 10.75, y: 3.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 3, c: 11, x: 11.75, y: 3.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 3, c: 13, x: 12.75, y: 3.25, w: 2.25, style: 2 },
+    // Row 4
+    PhysicalKey { r: 4, c: 0, x: 0.0, y: 4.25, w: 2.25, style: 1 },
+    PhysicalKey { r: 4, c: 2, x: 2.25, y: 4.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 4, c: 3, x: 3.25, y: 4.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 4, c: 4, x: 4.25, y: 4.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 4, c: 5, x: 5.25, y: 4.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 4, c: 6, x: 6.25, y: 4.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 4, c: 7, x: 7.25, y: 4.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 4, c: 8, x: 8.25, y: 4.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 4, c: 9, x: 9.25, y: 4.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 4, c: 10, x: 10.25, y: 4.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 4, c: 11, x: 11.25, y: 4.25, w: 1.0, style: 0 },
+    PhysicalKey { r: 4, c: 12, x: 12.25, y: 4.25, w: 2.75, style: 1 }, // RShift @ Matrix 4,12
+    PhysicalKey { r: 4, c: 14, x: 16.25, y: 4.25, w: 1.0, style: 1 },
+    // Row 5
+    PhysicalKey { r: 5, c: 0, x: 0.0, y: 5.25, w: 1.25, style: 1 },
+    PhysicalKey { r: 5, c: 1, x: 1.25, y: 5.25, w: 1.25, style: 1 },
+    PhysicalKey { r: 5, c: 2, x: 2.5, y: 5.25, w: 1.25, style: 1 },
+    PhysicalKey { r: 5, c: 6, x: 3.75, y: 5.25, w: 6.25, style: 3 }, // Space @ Matrix 5,6
+    PhysicalKey { r: 5, c: 9, x: 10.0, y: 5.25, w: 1.25, style: 1 },
+    PhysicalKey { r: 5, c: 10, x: 11.25, y: 5.25, w: 1.25, style: 1 },
+    PhysicalKey { r: 5, c: 8, x: 12.5, y: 5.25, w: 1.25, style: 1 }, // Menu/RWin @ Matrix 5,8
     PhysicalKey { r: 5, c: 12, x: 13.75, y: 5.25, w: 1.25, style: 1 },
     PhysicalKey { r: 5, c: 13, x: 15.25, y: 5.25, w: 1.0, style: 1 },
     PhysicalKey { r: 5, c: 14, x: 16.25, y: 5.25, w: 1.0, style: 1 },

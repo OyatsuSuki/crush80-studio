@@ -58,6 +58,8 @@ pub struct HardwareConfig {
     pub tapping_term_ms: u16,  // CONFIG[60]: 10ms units (0 => 200ms)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub battery: Option<u8>,   // Live battery % (0..100) via VIA id=0xFE
+    #[serde(default)]
+    pub prosuite_supported: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -487,7 +489,7 @@ impl Crush80Hid {
         let e = Self::via_cmd(&h, &[0x08, 0x03, 2])?[3];
         let sp = Self::via_cmd(&h, &[0x08, 0x03, 3])?[3];
         let col = Self::via_cmd(&h, &[0x08, 0x03, 4])?;
-        let rb = Self::via_cmd(&h, &[0x08, 0x03, 5])?[3] == 0xFF;
+        let rb = Self::via_cmd(&h, &[0x08, 0x03, 5, 0xAA])?[3] == 0xFF;
         Ok(RgbState {
             brightness: b,
             effect: e,
@@ -537,12 +539,29 @@ impl Crush80Hid {
     }
 
     fn read_hw_config_with(h: &WinHidHandle) -> Result<HardwareConfig, String> {
+        // Probe CONFIG[26] (OS mode, 0 or 1 on ProSuite) with sentinel 0xAA.
+        // Stock RGB & Non-RGB firmwares ignore id>=5 and echo back 0xAA untouched!
+        let os_probe = Self::via_cmd(h, &[0x08, 0x03, 26, 0xAA])?[3];
+        if os_probe == 0xAA {
+            return Ok(HardwareConfig {
+                logo_on: true,
+                side_on: true,
+                sys_rgb_on: true,
+                tapping_term_ms: 200,
+                battery: None,
+                prosuite_supported: false,
+                ..Default::default()
+            });
+        }
         let get = |id: u8| -> Result<u8, String> { Ok(Self::via_cmd(h, &[0x08, 0x03, id])?[3]) };
         let tt_units = get(60)?;
-        let bat_raw = get(0xFE).unwrap_or(255);
+        // Sentinel 0xFF ensures older/non-v3 firmware echoes 0xFF (-> None) instead of bogus 0%
+        let bat_raw = Self::via_cmd(h, &[0x08, 0x03, 0xFE, 0xFF])
+            .map(|r| r[3])
+            .unwrap_or(255);
         Ok(HardwareConfig {
             win_lock: get(21)? != 0,
-            mac_mode: get(26)? != 0,
+            mac_mode: os_probe != 0,
             low_latency: get(29)? != 0,
             logo_mode: get(32)?,
             logo_color: get(33)?,
@@ -553,6 +572,7 @@ impl Crush80Hid {
             sys_rgb_on: get(40)? == 0,
             tapping_term_ms: if tt_units == 0 { 200 } else { (tt_units as u16) * 10 },
             battery: if bat_raw <= 100 { Some(bat_raw) } else { None },
+            prosuite_supported: true,
         })
     }
 
@@ -567,7 +587,7 @@ impl Crush80Hid {
         let e = Self::via_cmd(&h, &[0x08, 0x03, 2])?[3];
         let sp = Self::via_cmd(&h, &[0x08, 0x03, 3])?[3];
         let col = Self::via_cmd(&h, &[0x08, 0x03, 4])?;
-        let rb = Self::via_cmd(&h, &[0x08, 0x03, 5])?[3] == 0xFF;
+        let rb = Self::via_cmd(&h, &[0x08, 0x03, 5, 0xAA])?[3] == 0xFF;
         let rgb = RgbState {
             brightness: b,
             effect: e,

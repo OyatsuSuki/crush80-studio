@@ -15,10 +15,11 @@ use eframe::egui::{
     Stroke, Vec2,
 };
 use hid_win::{Crush80Hid, DeviceStatus, FullSnapshot, HardwareConfig, RgbState};
-use i18n::{rgb_effect_label, tr, Lang};
+use i18n::{norgb_effect_label, rgb_effect_label, tr, Lang};
 use keycodes::{
-    decode_keycode_lang, factory_default_key, KeyCategory, BASIC_KEYCODES, CRUSH80_LAYOUT,
-    FACTORY_KEYMAP, SPECIAL_KEYCODES,
+    decode_keycode_for, decode_keycode_lang, detect_edition_from_keymap, f13_matrix,
+    factory_default_key_for, layout_for, special_keycodes_for, BoardEdition, KeyCategory,
+    BASIC_KEYCODES, FACTORY_KEYMAP,
 };
 use macro_codec::{
     decode_macro_buffer, egui_key_to_hid, encode_macro_buffer, encoded_byte_len, format_step,
@@ -86,6 +87,8 @@ struct Crush80App {
     status: DeviceStatus,
     lang: Lang,
     settings_path: PathBuf,
+    edition: BoardEdition,
+    edition_path: PathBuf,
     tab: NavTab,
     picker_tab: PickerTab,
     start_time: Instant,
@@ -165,6 +168,19 @@ fn load_lang(path: &PathBuf) -> Lang {
 
 fn save_lang(path: &PathBuf, lang: Lang) {
     if let Ok(s) = serde_json::to_string(&lang) {
+        let _ = std::fs::write(path, s);
+    }
+}
+
+fn load_edition(path: &PathBuf) -> BoardEdition {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<BoardEdition>(&s).ok())
+        .unwrap_or(BoardEdition::ProRgb)
+}
+
+fn save_edition(path: &PathBuf, ed: BoardEdition) {
+    if let Ok(s) = serde_json::to_string(&ed) {
         let _ = std::fs::write(path, s);
     }
 }
@@ -286,6 +302,8 @@ impl Crush80App {
         let autoswitch_path = data_dir.join("autoswitch.json");
         let settings_path = data_dir.join("lang.json");
         let lang = load_lang(&settings_path);
+        let edition_path = data_dir.join("edition.json");
+        let edition = load_edition(&edition_path);
 
         let hid = Arc::new(Crush80Hid::new());
         let cfg = load_config(&autoswitch_path);
@@ -317,6 +335,8 @@ impl Crush80App {
             status: DeviceStatus::default(),
             lang,
             settings_path,
+            edition,
+            edition_path,
             tab: NavTab::Keymap,
             picker_tab: PickerTab::ProBuilder,
             start_time: Instant::now(),
@@ -456,6 +476,12 @@ impl Crush80App {
         }
         if let Ok(l) = self.hid.read_keymap() {
             self.layers = l;
+            if let Some(detected) = detect_edition_from_keymap(&l) {
+                if self.edition != detected {
+                    self.edition = detected;
+                    save_edition(&self.edition_path, detected);
+                }
+            }
         }
         if let Ok((rgb, hw, pid)) = self.hid.poll_live_state() {
             self.rgb = rgb.clone();
@@ -491,7 +517,7 @@ impl Crush80App {
             Ok(()) => {
                 self.layers[self.current_layer][(r as usize) * 16 + (c as usize)] = code;
                 self.raw_hex_input = format!("0x{:04X}", code);
-                let dec = decode_keycode_lang(code, self.lang);
+                let dec = decode_keycode_for(code, self.lang, self.edition);
                 self.set_toast(format!("L{} ({},{}) -> {}", self.current_layer, r, c, dec.name), false);
             }
             Err(e) => self.set_toast(e, true),
@@ -502,14 +528,14 @@ impl Crush80App {
         let Some((r, c)) = self.selected_key else {
             return;
         };
-        let def = factory_default_key(self.current_layer, r, c);
+        let def = factory_default_key_for(self.edition, self.current_layer, r, c);
         self.mark_ui_edit();
         match self.hid.set_key(self.current_layer as u8, r, c, def) {
             Ok(()) => {
                 self.layers[self.current_layer][(r as usize) * 16 + (c as usize)] = def;
                 self.sync_selected_hex();
                 let s = tr(self.lang);
-                let dec = decode_keycode_lang(def, self.lang);
+                let dec = decode_keycode_for(def, self.lang, self.edition);
                 self.set_toast(format!("{} ({})", s.restored_key, dec.label), false);
             }
             Err(e) => self.set_toast(e, true),
@@ -523,7 +549,7 @@ impl Crush80App {
         for r in 0..8u8 {
             for c in 0..16u8 {
                 let idx = (r as usize) * 16 + (c as usize);
-                let def = FACTORY_KEYMAP[layer][idx];
+                let def = factory_default_key_for(self.edition, layer, r, c);
                 if self.layers[layer][idx] != def {
                     match self.hid.set_key(layer as u8, r, c, def) {
                         Ok(()) => {
@@ -888,15 +914,36 @@ impl eframe::App for Crush80App {
                                 );
                             }
                         }
+
+                        // Compact Board Edition Toggle (Pro RGB / Lite Non-RGB)
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            let w = (ui.available_width() - 6.0) / 2.0;
+                            for (ed, lbl) in [(BoardEdition::ProRgb, s.edition_pro), (BoardEdition::LiteNoRgb, s.edition_lite)] {
+                                let act = self.edition == ed;
+                                let b = egui::Button::new(
+                                    RichText::new(lbl).size(10.5).strong().color(if act { BG_CANVAS } else { TEXT_SEC }),
+                                )
+                                .fill(if act { if ed == BoardEdition::ProRgb { ACCENT } else { CYAN } } else { BG_SURFACE })
+                                .stroke(Stroke::new(1.0_f32, if act { if ed == BoardEdition::ProRgb { ACCENT } else { CYAN } } else { HAIRLINE }))
+                                .rounding(Rounding::same(5.0))
+                                .min_size(Vec2::new(w, 22.0));
+                                if ui.add(b).clicked() && self.edition != ed {
+                                    self.edition = ed;
+                                    save_edition(&self.edition_path, ed);
+                                }
+                            }
+                        });
                     });
 
-                ui.add_space(18.0);
+                ui.add_space(14.0);
                 ui.label(RichText::new(s.workspace).size(10.5).color(TEXT_DIM));
                 ui.add_space(6.0);
 
+                let rgb_nav_lbl = if self.edition == BoardEdition::LiteNoRgb { s.nav_logo_light } else { s.nav_rgb };
                 let items = [
                     (NavTab::Keymap, s.nav_keymap, 0u8),
-                    (NavTab::Rgb, s.nav_rgb, 1u8),
+                    (NavTab::Rgb, rgb_nav_lbl, 1u8),
                     (NavTab::Hardware, s.nav_hardware, 5u8),
                     (NavTab::Macros, s.nav_macros, 2u8),
                     (NavTab::Profiles, s.nav_profiles, 3u8),
@@ -1051,7 +1098,7 @@ impl Crush80App {
                     let idx = (r as usize) * 16 + (c as usize);
                     ui.columns(4, |lcols| {
                         for l in 0..4 {
-                            let dec = decode_keycode_lang(self.layers[l][idx], self.lang);
+                            let dec = decode_keycode_for(self.layers[l][idx], self.lang, self.edition);
                             let is_cur = l == self.current_layer;
                             egui::Frame::none()
                                 .fill(if is_cur { ACCENT_SOFT } else { BG_SURFACE })
@@ -1230,8 +1277,8 @@ impl Crush80App {
                     }
                     PickerTab::Wob => {
                         ui.horizontal_wrapped(|ui| {
-                            for &(code, _, _) in SPECIAL_KEYCODES {
-                                let lbl = decode_keycode_lang(code, self.lang).label;
+                            for &(code, _, _) in special_keycodes_for(self.edition) {
+                                let lbl = decode_keycode_for(code, self.lang, self.edition).label;
                                 if chip_button(ui, &lbl, false) {
                                     self.apply_keycode(code);
                                 }
@@ -1273,7 +1320,8 @@ impl Crush80App {
         let t = self.start_time.elapsed().as_secs_f32();
         let mut clicked = None;
 
-        for k in CRUSH80_LAYOUT {
+        let f13 = f13_matrix(self.edition);
+        for k in layout_for(self.edition) {
             let rect = Rect::from_min_size(
                 Pos2::new(origin.x + k.x * unit + 2.5, origin.y + k.y * unit + 2.5),
                 Vec2::new(k.w * unit - 5.0, unit - 5.0),
@@ -1292,9 +1340,9 @@ impl Crush80App {
             let selected = interactive && self.selected_key == Some((k.r, k.c));
             let hovered = resp.as_ref().map(|r| r.hovered()).unwrap_or(false);
             let code = self.layers[self.current_layer][(k.r as usize) * 16 + (k.c as usize)];
-            let dec = decode_keycode_lang(code, self.lang);
+            let dec = decode_keycode_for(code, self.lang, self.edition);
 
-            let glow_col = if !self.hw.sys_rgb_on || self.rgb.effect == 0 || self.rgb.brightness == 0 {
+            let glow_col = if self.edition == BoardEdition::LiteNoRgb || !self.hw.sys_rgb_on || self.rgb.effect == 0 || self.rgb.brightness == 0 {
                 None
             } else if self.rgb.rainbow {
                 let hue = (((k.x / 18.25) * 255.0 + t * (24.0 + self.rgb.speed as f32 * 14.0)) as u32 % 256) as u8;
@@ -1356,7 +1404,7 @@ impl Crush80App {
             } else {
                 TEXT_PRI
             };
-            if k.r == 4 && k.c == 12 {
+            if (k.r, k.c) == f13 {
                 p.text(Pos2::new(dish.center().x, dish.center().y - 5.0), egui::Align2::CENTER_CENTER, "F13", egui::FontId::proportional(10.5), legend_col);
                 p.text(Pos2::new(dish.center().x, dish.center().y + 7.5), egui::Align2::CENTER_CENTER, &dec.label, egui::FontId::proportional(8.0), TEXT_SEC);
             } else {
@@ -1373,10 +1421,11 @@ impl Crush80App {
 
     fn ui_rgb(&mut self, ui: &mut egui::Ui) {
         let s = tr(self.lang);
+        let is_lite = self.edition == BoardEdition::LiteNoRgb;
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.label(RichText::new(s.rgb_title).size(19.0).strong().color(TEXT_PRI));
-                ui.label(RichText::new(s.rgb_sub).size(12.0).color(TEXT_SEC));
+                ui.label(RichText::new(if is_lite { s.logo_rgb_title } else { s.rgb_title }).size(19.0).strong().color(TEXT_PRI));
+                ui.label(RichText::new(if is_lite { s.logo_rgb_sub } else { s.rgb_sub }).size(12.0).color(TEXT_SEC));
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if primary_button(ui, s.save_flash, 118.0) {
@@ -1398,53 +1447,65 @@ impl Crush80App {
                 ui.label(RichText::new(s.color_mode).size(14.5).strong().color(TEXT_PRI));
                 ui.add_space(10.0);
 
-                egui::Frame::none()
-                    .fill(BG_SURFACE)
-                    .stroke(Stroke::new(1.0_f32, HAIRLINE))
-                    .rounding(Rounding::same(9.0))
-                    .inner_margin(egui::Margin::same(4.0))
-                    .show(ui, |ui| {
-                        ui.columns(2, |scols| {
-                            let rb = self.rgb.rainbow;
-                            let b1 = egui::Button::new(
-                                RichText::new(s.rainbow_mode).size(12.5).strong().color(if rb { BG_CANVAS } else { TEXT_SEC }),
-                            )
-                            .fill(if rb { ACCENT } else { Color32::TRANSPARENT })
-                            .stroke(Stroke::NONE)
-                            .rounding(Rounding::same(6.0))
-                            .min_size(Vec2::new(scols[0].available_width(), 30.0));
-                            if scols[0].add(b1).clicked() {
-                                self.mark_ui_edit();
-                                self.rgb.rainbow = true;
-                                let _ = self.hid.set_rgb_partial(None, None, None, None, Some(true), false);
-                            }
+                if self.hw.prosuite_supported && !is_lite {
+                    egui::Frame::none()
+                        .fill(BG_SURFACE)
+                        .stroke(Stroke::new(1.0_f32, HAIRLINE))
+                        .rounding(Rounding::same(9.0))
+                        .inner_margin(egui::Margin::same(4.0))
+                        .show(ui, |ui| {
+                            ui.columns(2, |scols| {
+                                let rb = self.rgb.rainbow;
+                                let b1 = egui::Button::new(
+                                    RichText::new(s.rainbow_mode).size(12.5).strong().color(if rb { BG_CANVAS } else { TEXT_SEC }),
+                                )
+                                .fill(if rb { ACCENT } else { Color32::TRANSPARENT })
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(6.0))
+                                .min_size(Vec2::new(scols[0].available_width(), 30.0));
+                                if scols[0].add(b1).clicked() {
+                                    self.mark_ui_edit();
+                                    self.rgb.rainbow = true;
+                                    let _ = self.hid.set_rgb_partial(None, None, None, None, Some(true), false);
+                                }
 
-                            let b2 = egui::Button::new(
-                                RichText::new(s.single_mode).size(12.5).strong().color(if !rb { BG_CANVAS } else { TEXT_SEC }),
-                            )
-                            .fill(if !rb { ACCENT } else { Color32::TRANSPARENT })
-                            .stroke(Stroke::NONE)
-                            .rounding(Rounding::same(6.0))
-                            .min_size(Vec2::new(scols[1].available_width(), 30.0));
-                            if scols[1].add(b2).clicked() {
-                                self.mark_ui_edit();
-                                self.rgb.rainbow = false;
-                                let _ = self.hid.set_rgb_partial(None, None, None, Some((self.rgb.hue, self.rgb.saturation)), Some(false), false);
-                            }
+                                let b2 = egui::Button::new(
+                                    RichText::new(s.single_mode).size(12.5).strong().color(if !rb { BG_CANVAS } else { TEXT_SEC }),
+                                )
+                                .fill(if !rb { ACCENT } else { Color32::TRANSPARENT })
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(6.0))
+                                .min_size(Vec2::new(scols[1].available_width(), 30.0));
+                                if scols[1].add(b2).clicked() {
+                                    self.mark_ui_edit();
+                                    self.rgb.rainbow = false;
+                                    let _ = self.hid.set_rgb_partial(None, None, None, Some((self.rgb.hue, self.rgb.saturation)), Some(false), false);
+                                }
+                            });
                         });
-                    });
+                    ui.add_space(12.0);
+                }
 
-                ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(s.effect).size(12.5).color(TEXT_SEC));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let cur = rgb_effect_label(self.lang, self.rgb.effect);
+                        let max_eff = if is_lite { 4u8 } else { 18u8 };
+                        let cur = if is_lite {
+                            norgb_effect_label(self.lang, self.rgb.effect.min(4))
+                        } else {
+                            rgb_effect_label(self.lang, self.rgb.effect)
+                        };
                         egui::ComboBox::from_id_salt("rgb_eff")
                             .selected_text(cur)
                             .width(210.0)
                             .show_ui(ui, |ui| {
-                                for id in 0..=18u8 {
-                                    if ui.selectable_value(&mut self.rgb.effect, id, rgb_effect_label(self.lang, id)).changed() {
+                                for id in 0..=max_eff {
+                                    let lbl = if is_lite {
+                                        norgb_effect_label(self.lang, id)
+                                    } else {
+                                        rgb_effect_label(self.lang, id)
+                                    };
+                                    if ui.selectable_value(&mut self.rgb.effect, id, lbl).changed() {
                                         self.mark_ui_edit();
                                         let _ = self.hid.set_rgb_partial(None, Some(id), None, None, None, false);
                                     }
@@ -1569,6 +1630,18 @@ impl Crush80App {
         });
 
         ui.add_space(14.0);
+
+        if self.status.connected && !self.hw.prosuite_supported {
+            egui::Frame::none()
+                .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 18))
+                .stroke(Stroke::new(1.0_f32, CYAN))
+                .rounding(Rounding::same(8.0))
+                .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                .show(ui, |ui| {
+                    ui.label(RichText::new(s.prosuite_required_hint).size(12.0).color(CYAN));
+                });
+            ui.add_space(10.0);
+        }
 
         ui.columns(2, |cols| {
             card_frame().show(&mut cols[0], |ui| {
@@ -2432,13 +2505,13 @@ impl Crush80App {
 
         let origin = chassis.min + Vec2::new(pad_x, pad_y);
 
-        for k in CRUSH80_LAYOUT {
+        for k in layout_for(self.edition) {
             let rect = Rect::from_min_size(
                 Pos2::new(origin.x + k.x * unit + 2.5, origin.y + k.y * unit + 2.5),
                 Vec2::new(k.w * unit - 5.0, unit - 5.0),
             );
             let idx = (k.r as usize) * 16 + (k.c as usize);
-            let factory_code = FACTORY_KEYMAP[0][idx];
+            let factory_code = factory_default_key_for(self.edition, 0, k.r, k.c);
             let hid = if factory_code <= 0xFF { factory_code as u8 } else { 0 };
             // Normalize R-modifiers to match egui's unified modifier state if pressed
             let norm_hid = match hid {
@@ -2489,7 +2562,7 @@ impl Crush80App {
                 p.rect_stroke(rect, Rounding::same(6.5), Stroke::new(1.2_f32, MINT));
             }
 
-            let dec = decode_keycode_lang(self.layers[0][idx], self.lang);
+            let dec = decode_keycode_for(self.layers[0][idx], self.lang, self.edition);
             let legend_col = if is_pressed {
                 Color32::WHITE
             } else if is_chatter {
@@ -2531,6 +2604,18 @@ impl Crush80App {
                     }
                 }
             });
+
+            if self.edition == BoardEdition::LiteNoRgb {
+                ui.add_space(10.0);
+                egui::Frame::none()
+                    .fill(Color32::from_rgba_unmultiplied(251, 113, 133, 28))
+                    .stroke(Stroke::new(1.5_f32, ROSE))
+                    .rounding(Rounding::same(8.0))
+                    .inner_margin(egui::Margin::symmetric(12.0, 9.0))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(s.ota_norgb_blocked).size(12.5).strong().color(ROSE));
+                    });
+            }
 
             if !is_usb_wired {
                 ui.add_space(10.0);
@@ -2615,7 +2700,7 @@ impl Crush80App {
         // Flash trigger + live progress card
         card_frame().show(ui, |ui| {
             let valid_img = matches!(self.ota_image_info, Some(Ok(_))) && self.ota_image_bytes.is_some();
-            let can_flash = is_usb_wired && valid_img && !prog.running;
+            let can_flash = is_usb_wired && valid_img && !prog.running && self.edition == BoardEdition::ProRgb;
 
             ui.horizontal(|ui| {
                 let btn_lbl = if prog.running {
