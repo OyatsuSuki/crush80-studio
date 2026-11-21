@@ -434,6 +434,7 @@ impl Crush80Hid {
                                     0x99FCFDBD => "Ember".into(),
                                     0x4859A8C5 => "Ember".into(),
                                     0xC03D5821 => "Ember".into(),
+                                    0x6C8D7399 => "Ember".into(),
                                     _ => format!("Custom {:08X}", crc),
                                 };
                                 break;
@@ -610,6 +611,18 @@ impl Crush80Hid {
         Ok(())
     }
 
+    /// Triggers native OEM Logo LED flash feedback on Ember firmware (`id=0xFD`):
+    /// writes `[B, G, R, count, 0]` to `gp+759..763` (zero flash wear, safely ignored by stock firmware).
+    pub fn trigger_led_feedback(&self, count: u8, r: u8, g: u8, b: u8) {
+        if count == 0 {
+            return;
+        }
+        let _g = self.lock.lock().unwrap();
+        if let Ok((h, _)) = self.open_via() {
+            let _ = Self::via_cmd(&h, &[0x07, 0x03, 0xFD, b, g, r, count.min(6), 0]);
+        }
+    }
+
     pub fn read_macros(&self) -> Result<(Vec<String>, Vec<u8>), String> {
         let _g = self.lock.lock().unwrap();
         let (h, _) = self.open_via()?;
@@ -747,6 +760,8 @@ impl Crush80Hid {
             Self::via_cmd(&h, &[0x07, 0x03, 60, tt_units])?;
         }
         Self::via_cmd(&h, &[0x09])?;
+        // Mint x2 physical Logo LED pulse to acknowledge Profile / AutoSwitch load
+        let _ = Self::via_cmd(&h, &[0x07, 0x03, 0xFD, 153, 211, 52, 2, 0]);
         Ok(())
     }
 }

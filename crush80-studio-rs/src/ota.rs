@@ -81,6 +81,7 @@ pub fn known_firmware_name_opt(crc: u32) -> Option<&'static str> {
         0x99FC_FDBD => Some("Ember"),
         0x4859_A8C5 => Some("Ember"),
         0xC03D_5821 => Some("Ember"),
+        0x6C8D_7399 => Some("Ember"),
         _ => None,
     }
 }

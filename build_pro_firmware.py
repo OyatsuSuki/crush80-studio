@@ -24,7 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT / "wobkey-crush80-reboot-pro-firmware"
 SRC_BIN = REPO / "firmware/patched/Crush80-RGB-0108-NativeHeld-20261101.bin"
-OUT_BIN = ROOT / "Crush80-RGB-Ember-v1.1.0.bin"
+OUT_BIN = ROOT / "Crush80-RGB-Ember-v1.2.0.bin"
 
 EXPECTED_SRC_SHA256 = "3b6c6755b1a3b263d6e55c2a4415d7e91689ac43f897b3be970b236ef970de3a"
 
@@ -51,6 +51,16 @@ def enc_lbu(rd, rs1, imm12):
 def enc_sb(rs2, rs1, imm12):
     imm = imm12 & 0xFFF
     return ((imm >> 5) << 25) | (rs2 << 20) | (rs1 << 15) | (0 << 12) | ((imm & 0x1F) << 7) | 0x23
+
+def enc_beq(rs1, rs2, offset):
+    assert -4096 <= offset <= 4094 and (offset & 1) == 0
+    imm = offset & 0x1FFF
+    return (((imm >> 12) & 1) << 31) | (((imm >> 5) & 0x3F) << 25) | (rs2 << 20) | (rs1 << 15) | (0 << 12) | (((imm >> 1) & 0xF) << 8) | (((imm >> 11) & 1) << 7) | 0x63
+
+def enc_bne(rs1, rs2, offset):
+    assert -4096 <= offset <= 4094 and (offset & 1) == 0
+    imm = offset & 0x1FFF
+    return (((imm >> 12) & 1) << 31) | (((imm >> 5) & 0x3F) << 25) | (rs2 << 20) | (rs1 << 15) | (1 << 12) | (((imm >> 1) & 0xF) << 8) | (((imm >> 11) & 1) << 7) | 0x63
 
 def enc_bltu(rs1, rs2, offset):
     assert -4096 <= offset <= 4094 and (offset & 1) == 0
@@ -112,63 +122,79 @@ def build_patch(src: bytes) -> bytes:
     img = bytearray(src)
 
     # =========================================================================
-    # PATCH 1: Universal VIA CONFIG[5..62] Read/Write (channel 3, id = 5..62)
+    # PATCH 1: Universal VIA CONFIG[5..62] + Live Battery (0xFE) + OEM Logo LED Feedback (0xFD)
     # =========================================================================
-    # 1A. Compacted id=4 + dispatch trampoline at 0x12E6C..0x12ECA (94B budget)
-    out = bytearray()
+    # 1A. Shared 18B byte-copy tail helper at manifest-verified gap 0x12F00..0x12F14 (20B budget):
+    #     Copies `a1` bytes from `a5 + 3` to `a2`, then returns via `ra`.
+    COPY_HELPER = 0x12F00
+    cpy = bytearray()
     def emit32(b, w): b.extend(struct.pack("<I", w))
     def emit16(b, h): b.extend(struct.pack("<H", h))
 
-    # id=4: SET Single Color using gp directly
-    emit32(out, enc_sb(ZERO, GP, 109))       # CONFIG[5] = 0
-    emit32(out, enc_sb(A4, GP, 113))         # CONFIG[9] = hue
-    emit16(out, enc_c_mv(A3, A4))
-    emit16(out, enc_c_slli(A3, 1))
-    emit16(out, enc_c_add(A4, A3))
-    emit32(out, enc_lui(A3, 0x2001C))
-    emit32(out, enc_addi(A3, A3, 0x65C))
-    emit16(out, enc_c_add(A4, A3))
-    emit32(out, enc_lbu(A3, A4, 0))
-    emit32(out, enc_sb(A3, GP, 110))
-    emit32(out, enc_lbu(A3, A4, 1))
-    emit32(out, enc_sb(A3, GP, 111))
-    emit32(out, enc_lbu(A3, A4, 2))
-    emit32(out, enc_sb(A3, GP, 112))
-    emit32(out, enc_lbu(A5, A5, 4))
-    emit32(out, enc_xori(A5, A5, -1))
-    emit32(out, enc_sb(A5, GP, 134))
-    shared_ret_off = len(out)                # +0x3C (0x12EA8)
-    emit16(out, enc_c_jr(RA))
+    emit32(cpy, enc_lbu(A3, A5, 3))          # +0x00 (4B): load src[3 + k]
+    emit32(cpy, enc_sb(A3, A2, 0))           # +0x04 (4B): store dst[k]
+    emit16(cpy, enc_addi_c(A5, 1) if False else ((0b000 << 13) | (A5 << 7) | (1 << 2) | 0b01))   # +0x08 (2B): c.addi a5, 1
+    emit16(cpy, (0b000 << 13) | (A2 << 7) | (1 << 2) | 0b01)                                     # +0x0A (2B): c.addi a2, 1
+    emit16(cpy, (0b000 << 13) | (1 << 12) | (A1 << 7) | (0x1F << 2) | 0b01)                      # +0x0C (2B): c.addi a1, -1
+    emit16(cpy, enc_c_bnez(A1, -14))         # +0x0E (2B): loop to +0x00 while a1 != 0
+    emit16(cpy, enc_c_jr(RA))                # +0x10 (2B): return
+    assert len(cpy) == 18 <= 20
+    img[COPY_HELPER : COPY_HELPER + len(cpy)] = cpy
 
-    # id >= 5 entry at 0x12EAA:
-    #   - if packet[2] == 0xFE (a0 == 0xFD): read live battery % from gp + 0x10C (0x8090C) -> packet[3]
-    #   - else if packet[2] in 5..62 (a0 < 62): set a2 = gp + 105, jump to 0x1C2F0
-    id5_off = len(out)                       # +0x3E (0x12EAA)
-    emit32(out, enc_addi(A1, ZERO, 0xFD))    # +0x3E (4B): a1 = 0xFD (for packet[2] == 0xFE)
-    # bne a0, a1, +14 -> skip battery read (4+4+2 = 10B -> +14 from +0x42!)
-    # Encode bne a0, a1, +14: funct3 = 1
-    def enc_bne(rs1, rs2, offset):
-        imm = offset & 0x1FFF
-        return (((imm >> 12) & 1) << 31) | (((imm >> 5) & 0x3F) << 25) | (rs2 << 20) | (rs1 << 15) | (1 << 12) | (((imm >> 1) & 0xF) << 8) | (((imm >> 11) & 1) << 7) | 0x63
-    emit32(out, enc_bne(A0, A1, 14))         # +0x42 (4B)
-    emit32(out, enc_lbu(A3, GP, 0x10C))      # +0x46 (4B): a3 = true battery % (gp+0x10C = 0x8090C, 0..100)
-    emit32(out, enc_sb(A3, A5, 3))           # +0x4A (4B): packet[3] = battery %
-    emit16(out, enc_c_jr(RA))                # +0x4E (2B): return!
-    assert len(out) == 0x50
-    emit32(out, enc_sltiu(A1, A0, 62))       # +0x50 (4B): a1 = (a0 < 62) -> packet[2] in 5..62
-    emit16(out, enc_c_beqz(A1, shared_ret_off - len(out)))  # +0x54 (2B): if out of range -> ret
-    emit32(out, enc_addi(A2, GP, 105))       # +0x56 (4B): a2 = &CONFIG[1]
-    jmp_pc = 0x12E6C + len(out)              # 0x12EC6
-    emit32(out, enc_jal(ZERO, 0x1C2F0 - jmp_pc))  # +0x5A (4B): jump to 0x1C2F0
+    # 1B. Compacted id=4 + id>=5 dispatch at 0x12E6C..0x12ECA (exact 94B budget)
+    out = bytearray()
+
+    # id=4 (46B): SET Single Color using shared copy helper at 0x12F00
+    emit32(out, enc_sb(ZERO, GP, 109))       # +0x00 (4B): CONFIG[5] = 0 (exit Rainbow)
+    emit32(out, enc_sb(A4, GP, 113))         # +0x04 (4B): CONFIG[9] = hue
+    emit32(out, enc_lbu(A3, A5, 4))          # +0x08 (4B): sat = packet[4]
+    emit32(out, enc_xori(A3, A3, -1))        # +0x0C (4B): ~sat
+    emit32(out, enc_sb(A3, GP, 134))         # +0x10 (4B): CONFIG[30] = ~sat
+    emit16(out, enc_c_mv(A3, A4))            # +0x14 (2B)
+    emit16(out, enc_c_slli(A3, 1))           # +0x16 (2B)
+    emit16(out, enc_c_add(A4, A3))           # +0x18 (2B): a4 = hue * 3
+    emit32(out, enc_lui(A5, 0x2001C))        # +0x1A (4B)
+    emit32(out, enc_addi(A5, A5, 0x659))     # +0x1E (4B): 0x2001C65C - 3 (since copy reads 3(a5))
+    emit16(out, enc_c_add(A5, A4))           # +0x22 (2B): a5 = &cdb_palette[hue*3] - 3
+    emit32(out, enc_addi(A2, GP, 110))       # +0x24 (4B): a2 = &CONFIG[6]
+    emit16(out, enc_c_li(A1, 3))             # +0x28 (2B): 3 bytes (R, G, B)
+    emit32(out, enc_jal(ZERO, COPY_HELPER - (0x12E6C + len(out))))  # +0x2A (4B): tail-call copy+ret!
+    assert len(out) == 46
+
+    # id >= 5 entry at 0x12E9A (48B exact -> total 94B!):
+    #   - id in 5..62 (a0 < 62): jump to 0x1C2F0 (universal CONFIG[id] GET/SET)
+    #   - id == 0xFD (a0 == 0xFC): OEM Logo LED feedback [B=pkt[3], G=pkt[4], R=pkt[5], count=pkt[6], frame=pkt[7]] -> gp[759..763]
+    #   - id == 0xFE (a0 == 0xFD): Live battery % from gp+0x10C -> pkt[3]
+    id5_off = len(out)                       # +0x2E (0x12E9A)
+    emit32(out, enc_sltiu(A1, A0, 62))       # +0x2E (4B): a1 = (a0 < 62)
+    emit16(out, enc_c_beqz(A1, 10))          # +0x32 (2B): if >= 62 -> +0x3C
+    emit32(out, enc_addi(A2, GP, 105))       # +0x34 (4B): a2 = &CONFIG[1]
+    emit32(out, enc_jal(ZERO, 0x1C2F0 - (0x12E6C + len(out))))      # +0x38 (4B): universal CONFIG GET/SET
+    assert len(out) == 0x3C
+
+    # +0x3C: check id == 0xFD (a0 == 0xFC) -> OEM Logo LED feedback
+    emit32(out, enc_addi(A1, ZERO, 0xFC))    # +0x3C (4B): a1 = 0xFC
+    emit32(out, enc_bne(A0, A1, 14))         # +0x40 (4B): if != 0xFC -> +0x4E (check 0xFE)
+    emit32(out, enc_addi(A2, GP, 759))       # +0x44 (4B): dst = &gp[759] (B, G, R, count, frame_cnt)
+    emit16(out, enc_c_li(A1, 5))             # +0x48 (2B): copy 5 bytes pkt[3..7] -> gp[759..763]
+    emit32(out, enc_jal(ZERO, COPY_HELPER - (0x12E6C + len(out))))  # +0x4A (4B): tail-call copy+ret!
+    assert len(out) == 0x4E
+
+    # +0x4E: check id == 0xFE (a0 == 0xFD) -> Live battery % read
+    emit16(out, (0b000 << 13) | (A1 << 7) | (1 << 2) | 0b01)        # +0x4E (2B): c.addi a1, 1 -> 0xFD
+    emit32(out, enc_bne(A0, A1, 12))         # +0x50 (4B): if != 0xFD -> +0x5C (ret)
+    emit32(out, enc_lbu(A3, GP, 0x10C))      # +0x54 (4B): true battery % (0..100)
+    emit32(out, enc_sb(A3, A5, 3))           # +0x58 (4B): packet[3] = battery %
+    emit16(out, enc_c_jr(RA))                # +0x5C (2B): shared return!
     assert len(out) == 94, f"Expected exact 94B, got {len(out)}B"
 
-    # Redirect 0x12DB0 bltu a1, a0 -> 0x12EAA
+    # Redirect 0x12DB0 bltu a1, a0 -> 0x12E9A
     orig_br = struct.unpack_from("<I", img, 0x12DB0)[0]
     assert orig_br == enc_bltu(A1, A0, 0x1C4)
     struct.pack_into("<I", img, 0x12DB0, enc_bltu(A1, A0, (0x12E6C + id5_off) - 0x12DB0))
     img[0x12E6C : 0x12E6C + 94] = out
 
-    # 1B. Universal CONFIG[id] GET/SET handler at free reclaimed gap 0x1C2F0..0x1C30C (28B budget)
+    # 1C. Universal CONFIG[id] GET/SET handler at manifest-verified gap 0x1C2F0..0x1C30C (28B budget)
     stub = bytearray()
     emit16(stub, enc_c_add(A2, A0))          # +0x00 (2B): a2 = &CONFIG[packet[2]]
     emit16(stub, enc_c_andi(A4, 1))          # +0x02 (2B): 1 if SET(7), 0 if GET(8)
@@ -254,8 +280,23 @@ def verify_in_emulator(patched: bytes):
 
     # 2. Test battery % read (id=0xFE -> gp+0x10C = 0x8090C)
     m.bus.poke(0x8090C, bytes([87]))
-    bat = via(bytes([0x08, 0x03, 0xFE]))[3]
+    bat = via(bytes([0x08, 0x03, 0xFE, 0xFF]))[3]
     assert bat == 87, f"Battery read mismatch: {bat} != 87"
+
+    # 2B. Test universal OEM Logo LED feedback command: [0x07, 0x03, 0xFD, B, G, R, count, 0] -> gp+759..763
+    def peek_blink():
+        return tuple(m.bus.peek(0x80800 + 759, 5))
+
+    m.bus.poke(0x80800 + 763, bytes([19]))
+    via(bytes([0x07, 0x03, 0xFD, 255, 255, 255, 3, 0]))  # White x3 (Low Latency ON)
+    assert peek_blink() == (255, 255, 255, 3, 0), f"White x3 blink mismatch: {peek_blink()}"
+
+    via(bytes([0x07, 0x03, 0xFD, 153, 211, 52, 2, 0]))   # Mint x2 (Profile Switch)
+    assert peek_blink() == (153, 211, 52, 2, 0), f"Mint x2 blink mismatch: {peek_blink()}"
+
+    # Verify coldboot completes cleanly!
+    from rc2emu.coldstart import coldboot
+    coldboot(patched)
 
     # 3. Test out-of-range ids (0, 63, 64, 255) are safely ignored
     via(bytes([0x07, 0x03, 0, 0xAA]))

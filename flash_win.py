@@ -74,8 +74,10 @@ if __name__ == "__main__":
     PROSUITE2_CRC = 0x4859A8C5
     PROSUITE3_SHA = "4a504a0337dec774938b6392f1480714b099609b43e006e827804b2b73461599"
     PROSUITE3_CRC = 0xC03D5821
+    EMBER12_SHA = "0bfa1a9bac7307b78f167a4aafac989b3af75352e086b853443d70b8ac74aa06"
+    EMBER12_CRC = 0x6C8D7399
 
-    ALL_CUSTOM = (WEBRAINBOW_CRC, PROSUITE_CRC, PROSUITE2_CRC, PROSUITE3_CRC)
+    ALL_CUSTOM = (WEBRAINBOW_CRC, PROSUITE_CRC, PROSUITE2_CRC, PROSUITE3_CRC, EMBER12_CRC)
     crush80.APPROVED_FLASH_IMAGES[WEBRAINBOW_SHA] = {
         "name": "NativeHeld v1.3.0 + WebRainbow (VIA id=5)",
         "crc": WEBRAINBOW_CRC,
@@ -92,8 +94,13 @@ if __name__ == "__main__":
         "from_crcs": (0xCA2D85DC, 0x2F4F4974) + ALL_CUSTOM,
     }
     crush80.APPROVED_FLASH_IMAGES[PROSUITE3_SHA] = {
-        "name": "NativeHeld v1.3.0 + ProSuite v3 (True Battery gp+0x10C)",
+        "name": "Ember (True Battery)",
         "crc": PROSUITE3_CRC,
+        "from_crcs": (0xCA2D85DC, 0x2F4F4974) + ALL_CUSTOM,
+    }
+    crush80.APPROVED_FLASH_IMAGES[EMBER12_SHA] = {
+        "name": "Ember (Logo LED Feedback)",
+        "crc": EMBER12_CRC,
         "from_crcs": (0xCA2D85DC, 0x2F4F4974) + ALL_CUSTOM,
     }
     # Allow seamless rollback from custom builds back to Official 0108 or stock NativeHeld v1.3.0

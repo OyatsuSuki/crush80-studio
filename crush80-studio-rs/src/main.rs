@@ -536,6 +536,7 @@ impl Crush80App {
                 self.sync_selected_hex();
                 let s = tr(self.lang);
                 let dec = decode_keycode_for(def, self.lang, self.edition);
+                self.hid.trigger_led_feedback(1, 56, 189, 248);
                 self.set_toast(format!("{} ({})", s.restored_key, dec.label), false);
             }
             Err(e) => self.set_toast(e, true),
@@ -1432,7 +1433,10 @@ impl Crush80App {
                 if primary_button(ui, s.save_flash, 118.0) {
                     self.mark_ui_edit();
                     match self.hid.set_rgb_partial(None, None, None, None, None, true) {
-                        Ok(()) => self.set_toast(s.saved_flash, false),
+                        Ok(()) => {
+                            self.hid.trigger_led_feedback(1, 245, 158, 11);
+                            self.set_toast(s.saved_flash, false);
+                        }
                         Err(e) => self.set_toast(e, true),
                     }
                 }
@@ -1623,7 +1627,10 @@ impl Crush80App {
                 if primary_button(ui, s.save_flash, 118.0) {
                     self.mark_ui_edit();
                     match self.hid.set_rgb_partial(None, None, None, None, None, true) {
-                        Ok(()) => self.set_toast(s.saved_flash, false),
+                        Ok(()) => {
+                            self.hid.trigger_led_feedback(1, 245, 158, 11);
+                            self.set_toast(s.saved_flash, false);
+                        }
                         Err(e) => self.set_toast(e, true),
                     }
                 }
@@ -1657,7 +1664,10 @@ impl Crush80App {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if toggle_switch(ui, &mut self.hw.low_latency) {
                             self.mark_ui_edit();
-                            let _ = self.hid.set_config_byte(29, if self.hw.low_latency { 0xFF } else { 0x00 }, false);
+                            let on = self.hw.low_latency;
+                            let _ = self.hid.set_config_byte(29, if on { 0xFF } else { 0x00 }, false);
+                            // Exact native Fn+H OEM Logo LED flash: White x3 ON / x1 OFF
+                            self.hid.trigger_led_feedback(if on { 3 } else { 1 }, 255, 255, 255);
                         }
                     });
                 });
@@ -1674,7 +1684,10 @@ impl Crush80App {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if toggle_switch(ui, &mut self.hw.win_lock) {
                             self.mark_ui_edit();
-                            let _ = self.hid.set_config_byte(21, if self.hw.win_lock { 0xFF } else { 0x00 }, false);
+                            let locked = self.hw.win_lock;
+                            let _ = self.hid.set_config_byte(21, if locked { 0xFF } else { 0x00 }, false);
+                            // Signature Amber Logo LED flash: x2 Locked / x1 Unlocked
+                            self.hid.trigger_led_feedback(if locked { 2 } else { 1 }, 255, 160, 0);
                         }
                     });
                 });
@@ -1693,11 +1706,15 @@ impl Crush80App {
                             self.mark_ui_edit();
                             self.hw.mac_mode = true;
                             let _ = self.hid.set_config_byte(26, 1, false);
+                            // Exact native Fn+M OEM Logo LED flash: Yellow x3 macOS
+                            self.hid.trigger_led_feedback(3, 255, 255, 0);
                         }
                         if chip_button(ui, "Windows", !self.hw.mac_mode) {
                             self.mark_ui_edit();
                             self.hw.mac_mode = false;
                             let _ = self.hid.set_config_byte(26, 0, false);
+                            // Exact native Fn+M OEM Logo LED flash: Yellow x1 Windows
+                            self.hid.trigger_led_feedback(1, 255, 255, 0);
                         }
                     });
                 });
@@ -1965,7 +1982,10 @@ impl Crush80App {
                     self.mark_ui_edit();
                     match encode_macro_buffer(&self.macro_slots) {
                         Ok(raw) => match self.hid.write_macro_buffer(&raw) {
-                            Ok(()) => self.set_toast(s.saved_flash, false),
+                            Ok(()) => {
+                                self.hid.trigger_led_feedback(1, 167, 139, 250);
+                                self.set_toast(s.saved_flash, false);
+                            }
                             Err(e) => self.set_toast(e, true),
                         },
                         Err(e) => self.set_toast(e, true),
@@ -2648,10 +2668,11 @@ impl Crush80App {
                 }
 
                 if let Some(ember_path) = find_bundled_firmware(&[
+                    "Crush80-RGB-Ember-v1.2.0.bin",
+                    r"Crush80Driver\Crush80-RGB-Ember-v1.2.0.bin",
                     "Crush80-RGB-Ember-v1.1.0.bin",
                     r"Crush80Driver\Crush80-RGB-Ember-v1.1.0.bin",
                     "Crush80-RGB-Ember.bin",
-                    r"Crush80Driver\Crush80-RGB-Ember.bin",
                 ]) {
                     if chip_button(ui, s.ota_prosuite_btn, false) {
                         self.load_ota_file(ember_path);
