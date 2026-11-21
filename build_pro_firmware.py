@@ -124,27 +124,49 @@ def build_patch(src: bytes) -> bytes:
     # =========================================================================
     # PATCH 1: Universal VIA CONFIG[5..62] + Live Battery (0xFE) + OEM Logo LED Feedback (0xFD)
     # =========================================================================
-    # 1A. Shared 18B byte-copy tail helper at manifest-verified gap 0x12F00..0x12F14 (20B budget):
-    #     Copies `a1` bytes from `a5 + 3` to `a2`, then returns via `ra`.
-    COPY_HELPER = 0x12F00
-    cpy = bytearray()
+    # Uses ONLY 100% NativeHeld-20261101.elf-verified reclaimed dead-code regions:
+    #   - 0x12E6C..0x12ECA (94B inside rgb() id=4 + id>=5 dispatch)
+    #   - 0x1C2F0..0x1C30C (28B: CONFIG_HANDLER @ 0x1C2F0 + shared COPY_HELPER @ 0x1C2FA)
+    #   - 0x136E4..0x136EE (10B <= 16B: CONFIG_GET helper)
+    CONFIG_HANDLER = 0x1C2F0
+    COPY_HELPER = 0x1C2FA
+    CONFIG_GET = 0x136E4
+
     def emit32(b, w): b.extend(struct.pack("<I", w))
     def emit16(b, h): b.extend(struct.pack("<H", h))
 
-    emit32(cpy, enc_lbu(A3, A5, 3))          # +0x00 (4B): load src[3 + k]
-    emit32(cpy, enc_sb(A3, A2, 0))           # +0x04 (4B): store dst[k]
-    emit16(cpy, enc_addi_c(A5, 1) if False else ((0b000 << 13) | (A5 << 7) | (1 << 2) | 0b01))   # +0x08 (2B): c.addi a5, 1
-    emit16(cpy, (0b000 << 13) | (A2 << 7) | (1 << 2) | 0b01)                                     # +0x0A (2B): c.addi a2, 1
-    emit16(cpy, (0b000 << 13) | (1 << 12) | (A1 << 7) | (0x1F << 2) | 0b01)                      # +0x0C (2B): c.addi a1, -1
-    emit16(cpy, enc_c_bnez(A1, -14))         # +0x0E (2B): loop to +0x00 while a1 != 0
-    emit16(cpy, enc_c_jr(RA))                # +0x10 (2B): return
-    assert len(cpy) == 18 <= 20
-    img[COPY_HELPER : COPY_HELPER + len(cpy)] = cpy
+    # 1A. CONFIG_GET (10B <= 16B) at verified 20261101 gap 0x136E4..0x136F4
+    cget = bytearray()
+    emit32(cget, enc_lbu(A3, A2, 0))         # +0x00 (4B): a3 = CONFIG[id]
+    emit32(cget, enc_sb(A3, A5, 3))          # +0x04 (4B): packet[3] = a3
+    emit16(cget, enc_c_jr(RA))               # +0x08 (2B): return
+    assert len(cget) == 10 <= 16
+    img[CONFIG_GET : CONFIG_GET + len(cget)] = cget
 
-    # 1B. Compacted id=4 + id>=5 dispatch at 0x12E6C..0x12ECA (exact 94B budget)
+    # 1B. CONFIG_HANDLER (10B) + shared COPY_HELPER (18B) = exact 28B at 0x1C2F0..0x1C30C
+    #     Note: On entry to CONFIG_HANDLER from sltiu a1, a0, 62, a1 is ALREADY 1!
+    #     So SET simply branches straight into COPY_HELPER with a1=1, copying packet[3] -> CONFIG[id].
+    stub = bytearray()
+    emit16(stub, enc_c_add(A2, A0))          # +0x00 (2B): a2 = &CONFIG[id]
+    emit16(stub, enc_c_andi(A4, 1))          # +0x02 (2B): 1 if SET(7), 0 if GET(8)
+    emit16(stub, enc_c_bnez(A4, 6))          # +0x04 (2B): if SET -> +0x0A (COPY_HELPER, a1==1!)
+    emit32(stub, enc_jal(ZERO, CONFIG_GET - (CONFIG_HANDLER + len(stub))))  # +0x06 (4B): GET
+    assert CONFIG_HANDLER + len(stub) == COPY_HELPER
+    # Shared COPY_HELPER at 0x1C2FA (18B): copies `a1` bytes from `a5 + 3` to `a2`, then returns.
+    emit32(stub, enc_lbu(A3, A5, 3))         # +0x0A (4B): load src[3 + k]
+    emit32(stub, enc_sb(A3, A2, 0))          # +0x0E (4B): store dst[k]
+    emit16(stub, (0b000 << 13) | (A5 << 7) | (1 << 2) | 0b01)               # +0x12 (2B): c.addi a5, 1
+    emit16(stub, (0b000 << 13) | (A2 << 7) | (1 << 2) | 0b01)               # +0x14 (2B): c.addi a2, 1
+    emit16(stub, (0b000 << 13) | (1 << 12) | (A1 << 7) | (0x1F << 2) | 0b01)  # +0x16 (2B): c.addi a1, -1
+    emit16(stub, enc_c_bnez(A1, -14))        # +0x18 (2B): loop to +0x0A while a1 != 0
+    emit16(stub, enc_c_jr(RA))               # +0x1A (2B): return
+    assert len(stub) == 28
+    img[CONFIG_HANDLER : CONFIG_HANDLER + len(stub)] = stub
+
+    # 1C. Compacted id=4 + id>=5 dispatch at 0x12E6C..0x12ECA (exact 94B budget)
     out = bytearray()
 
-    # id=4 (46B): SET Single Color using shared copy helper at 0x12F00
+    # id=4 (46B): SET Single Color using shared COPY_HELPER at 0x1C2FA
     emit32(out, enc_sb(ZERO, GP, 109))       # +0x00 (4B): CONFIG[5] = 0 (exit Rainbow)
     emit32(out, enc_sb(A4, GP, 113))         # +0x04 (4B): CONFIG[9] = hue
     emit32(out, enc_lbu(A3, A5, 4))          # +0x08 (4B): sat = packet[4]
@@ -162,14 +184,14 @@ def build_patch(src: bytes) -> bytes:
     assert len(out) == 46
 
     # id >= 5 entry at 0x12E9A (48B exact -> total 94B!):
-    #   - id in 5..62 (a0 < 62): jump to 0x1C2F0 (universal CONFIG[id] GET/SET)
+    #   - id in 5..62 (a0 < 62): jump to CONFIG_HANDLER (0x1C2F0) with a1=1
     #   - id == 0xFD (a0 == 0xFC): OEM Logo LED feedback [B=pkt[3], G=pkt[4], R=pkt[5], count=pkt[6], frame=pkt[7]] -> gp[759..763]
     #   - id == 0xFE (a0 == 0xFD): Live battery % from gp+0x10C -> pkt[3]
     id5_off = len(out)                       # +0x2E (0x12E9A)
-    emit32(out, enc_sltiu(A1, A0, 62))       # +0x2E (4B): a1 = (a0 < 62)
+    emit32(out, enc_sltiu(A1, A0, 62))       # +0x2E (4B): a1 = (a0 < 62) [also sets a1 = 1 for SET!]
     emit16(out, enc_c_beqz(A1, 10))          # +0x32 (2B): if >= 62 -> +0x3C
     emit32(out, enc_addi(A2, GP, 105))       # +0x34 (4B): a2 = &CONFIG[1]
-    emit32(out, enc_jal(ZERO, 0x1C2F0 - (0x12E6C + len(out))))      # +0x38 (4B): universal CONFIG GET/SET
+    emit32(out, enc_jal(ZERO, CONFIG_HANDLER - (0x12E6C + len(out))))  # +0x38 (4B): universal CONFIG GET/SET
     assert len(out) == 0x3C
 
     # +0x3C: check id == 0xFD (a0 == 0xFC) -> OEM Logo LED feedback
@@ -193,23 +215,6 @@ def build_patch(src: bytes) -> bytes:
     assert orig_br == enc_bltu(A1, A0, 0x1C4)
     struct.pack_into("<I", img, 0x12DB0, enc_bltu(A1, A0, (0x12E6C + id5_off) - 0x12DB0))
     img[0x12E6C : 0x12E6C + 94] = out
-
-    # 1C. Universal CONFIG[id] GET/SET handler at manifest-verified gap 0x1C2F0..0x1C30C (28B budget)
-    stub = bytearray()
-    emit16(stub, enc_c_add(A2, A0))          # +0x00 (2B): a2 = &CONFIG[packet[2]]
-    emit16(stub, enc_c_andi(A4, 1))          # +0x02 (2B): 1 if SET(7), 0 if GET(8)
-    emit16(stub, enc_c_bnez(A4, 12))         # +0x04 (2B): if SET -> +0x10
-    # GET (cmd 8): packet[3] = CONFIG[id]
-    emit32(stub, enc_lbu(A3, A2, 0))         # +0x06 (4B)
-    emit32(stub, enc_sb(A3, A5, 3))          # +0x0A (4B)
-    emit16(stub, enc_c_jr(RA))               # +0x0E (2B)
-    # SET (cmd 7): CONFIG[id] = packet[3]
-    assert len(stub) == 0x10
-    emit32(stub, enc_lbu(A3, A5, 3))         # +0x10 (4B)
-    emit32(stub, enc_sb(A3, A2, 0))          # +0x14 (4B)
-    emit16(stub, enc_c_jr(RA))               # +0x18 (2B)
-    assert len(stub) == 26 <= 28
-    img[0x1C2F0 : 0x1C2F0 + len(stub)] = stub
 
     # =========================================================================
     # PATCH 2: Dynamic Tap-Hold Tapping Term via CONFIG[60] (10ms units)
@@ -293,6 +298,13 @@ def verify_in_emulator(patched: bytes):
 
     via(bytes([0x07, 0x03, 0xFD, 153, 211, 52, 2, 0]))   # Mint x2 (Profile Switch)
     assert peek_blink() == (153, 211, 52, 2, 0), f"Mint x2 blink mismatch: {peek_blink()}"
+
+    # 2C. Test VIA 0x0E (macro buffer read) & 0x12 (keymap buffer read) remain 100% intact!
+    m.stub(0x2000A7CE, lambda mm: None)  # flash_read stub
+    r_mac = via(bytes([0x0E, 0x00, 0x00, 16]))
+    assert r_mac[0] == 0x0E, f"Macro read 0x0E broken: {list(r_mac)}"
+    r_km = via(bytes([0x12, 0x00, 0x00, 16]))
+    assert r_km[0] == 0x12, f"Keymap read 0x12 broken: {list(r_km)}"
 
     # Verify coldboot completes cleanly!
     from rc2emu.coldstart import coldboot

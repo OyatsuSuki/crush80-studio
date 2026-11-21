@@ -435,6 +435,7 @@ impl Crush80Hid {
                                     0x4859A8C5 => "Ember".into(),
                                     0xC03D5821 => "Ember".into(),
                                     0x6C8D7399 => "Ember".into(),
+                                    0x0AACEB06 => "Ember".into(),
                                     _ => format!("Custom {:08X}", crc),
                                 };
                                 break;

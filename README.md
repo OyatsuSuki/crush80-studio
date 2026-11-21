@@ -98,7 +98,7 @@ Clone the upstream [wobkey-crush80-reboot-pro-firmware](https://github.com/tarzs
 uv run python build_pro_firmware.py
 ```
 
-The builder patches `Crush80-RGB-0108-NativeHeld-20261101.bin` and runs full RISC-V emulation verification (`rc2emu`) before writing `Crush80-RGB-Ember-v1.2.0.bin` (OTA CRC `0x6C8D7399`).
+The builder patches `Crush80-RGB-0108-NativeHeld-20261101.bin` and runs full RISC-V emulation verification (`rc2emu`) before writing `Crush80-RGB-Ember-v1.2.0.bin` (OTA CRC `0x0AACEB06`).
 
 ---
 
