@@ -799,6 +799,7 @@ impl eframe::App for Crush80App {
                     p.rect_stroke(ic_r.shrink(3.5), Rounding::same(1.5), Stroke::new(1.3_f32, BG_CANVAS));
                     ui.add_space(6.0);
                     ui.label(RichText::new("Crush 80 Studio").size(12.0).strong().color(TEXT_PRI));
+                    ui.label(RichText::new(concat!("v", env!("CARGO_PKG_VERSION"))).size(10.5).color(TEXT_DIM));
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Close button -> Minimize directly to System Tray via Win32 ShowWindow(SW_HIDE)!
@@ -2646,12 +2647,14 @@ impl Crush80App {
                     }
                 }
 
-                if let Some(prosuite_path) = find_bundled_firmware(&[
+                if let Some(ember_path) = find_bundled_firmware(&[
+                    "Crush80-RGB-Ember.bin",
+                    r"Crush80Driver\Crush80-RGB-Ember.bin",
                     "Crush80-RGB-0108-NativeHeld-v130-ProSuite.bin",
                     r"Crush80Driver\Crush80-RGB-0108-NativeHeld-v130-ProSuite.bin",
                 ]) {
                     if chip_button(ui, s.ota_prosuite_btn, false) {
-                        self.load_ota_file(prosuite_path);
+                        self.load_ota_file(ember_path);
                     }
                 }
 

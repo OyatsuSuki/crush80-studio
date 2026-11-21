@@ -4,9 +4,9 @@
 [![Latest Release](https://img.shields.io/github/v/release/OyatsuSuki/crush80-studio)](https://github.com/OyatsuSuki/crush80-studio/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-amber.svg)](LICENSE)
 
-A lightweight, pure-Rust native Windows desktop driver & custom firmware enhancement suite (**ProSuite v3**) for both **WOBKEY Crush 80 Pro (RGB)** and **Crush 80 Lite / Standard (Non-RGB)** mechanical keyboards (`VID: 0x320F`, `PID: 0x5055` USB Wired / `0x5088` 2.4G Wireless / Bluetooth BLE Battery).
+A lightweight, pure-Rust native Windows desktop driver & custom firmware (**Ember**) for both **WOBKEY Crush 80 Pro (RGB)** and **Crush 80 Lite / Standard (Non-RGB)** mechanical keyboards (`VID: 0x320F`, `PID: 0x5055` USB Wired / `0x5088` 2.4G Wireless / Bluetooth BLE Battery).
 
-**WOBKEY Crush 80 Pro（RGB 版）& Lite / 标准版（无光版）** 通用轻量级 Windows 原生桌面驱动与固件增强套件（**ProSuite v3**），单文件独立运行（~3.4 MB），自动识别 PCB 版本。
+**WOBKEY Crush 80 Pro（RGB 版）& Lite / 标准版（无光版）** 通用轻量级 Windows 原生桌面驱动与 **Ember** 定制固件，单文件独立运行（~3.4 MB），自动识别 PCB 版本。
 
 <p align="center">
   <img src="docs/screenshot-keymap.png" alt="Keymap & Tap-Hold Editor" width="100%" />
@@ -65,7 +65,7 @@ A lightweight, pure-Rust native Windows desktop driver & custom firmware enhance
 │   │   ├── autoswitch.rs    # Foreground window watcher for per-app profile switching
 │   │   └── i18n.rs          # Chinese / English / Japanese UI localization
 │   └── assets/icon_64.rgba  # Embedded window icon
-├── build_pro_firmware.py    # ProSuite v3 RISC-V firmware patcher + rc2emu emulator verifier
+├── build_pro_firmware.py    # Ember RISC-V firmware patcher + rc2emu emulator verifier
 ├── flash_win.py             # Standalone Python CLI OTA flasher for Windows
 ├── via_backup.py            # Standalone Python CLI keymap/macro/RGB backup & restore tool
 ├── embed_icon.py            # Windows PE icon resource embedder for Crush80_Studio.exe
@@ -90,7 +90,7 @@ Optionally embed the Windows `.ico` resource:
 uv run --with pillow python embed_icon.py
 ```
 
-### 2. Build `ProSuite v3` Firmware (Optional)
+### 2. Build `Ember` Firmware (Optional)
 
 Clone the upstream [wobkey-crush80-reboot-pro-firmware](https://github.com/tarzst/wobkey-crush80-reboot-pro-firmware) repository alongside `build_pro_firmware.py`, then run:
 
@@ -98,7 +98,7 @@ Clone the upstream [wobkey-crush80-reboot-pro-firmware](https://github.com/tarzs
 uv run python build_pro_firmware.py
 ```
 
-The builder patches `Crush80-RGB-0108-NativeHeld-20261101.bin` and runs full RISC-V emulation verification (`rc2emu`) before writing `Crush80-RGB-0108-NativeHeld-v130-ProSuite.bin` (OTA CRC `0xC03D5821`).
+The builder patches `Crush80-RGB-0108-NativeHeld-20261101.bin` and runs full RISC-V emulation verification (`rc2emu`) before writing `Crush80-RGB-Ember.bin` (OTA CRC `0xC03D5821`).
 
 ---
 

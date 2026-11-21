@@ -429,11 +429,11 @@ impl Crush80Hid {
                                 st.firmware_name = match crc {
                                     0xCA2D85DC => "Official WOBLAB 0108".into(),
                                     0xFE1AA4C2 => "Community RC2".into(),
-                                    0x2F4F4974 => "NativeHeld v1.3.0".into(),
-                                    0xAF713C2C => "WebRainbow".into(),
-                                    0x99FCFDBD => "ProSuite v1".into(),
-                                    0x4859A8C5 => "ProSuite v2".into(),
-                                    0xC03D5821 => "ProSuite v3".into(),
+                                    0x2F4F4974 => "NativeHeld".into(),
+                                    0xAF713C2C => "Ember".into(),
+                                    0x99FCFDBD => "Ember".into(),
+                                    0x4859A8C5 => "Ember".into(),
+                                    0xC03D5821 => "Ember".into(),
                                     _ => format!("Custom {:08X}", crc),
                                 };
                                 break;

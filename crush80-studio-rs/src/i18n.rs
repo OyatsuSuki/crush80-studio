@@ -282,7 +282,7 @@ static ZH: Strings = Strings {
     ota_select_bin: "选择固件文件 (.bin)",
     ota_flash_btn: "开始刷写",
     ota_rollback_official: "回退官方原版固件",
-    ota_prosuite_btn: "刷入 ProSuite 增强固件",
+    ota_prosuite_btn: "刷入 Ember 增强固件",
     ota_usb_only: "请使用 USB 有线连接后再进行刷写",
     ota_valid: "固件校验通过",
     ota_invalid: "无效的固件文件",
@@ -297,7 +297,7 @@ static ZH: Strings = Strings {
     nav_logo_light: "徽章灯效",
     logo_rgb_title: "徽章灯效控制",
     logo_rgb_sub: "无光版专属 · 控制正面灯条的 5 种灯效与颜色",
-    prosuite_required_hint: "当前为原厂固件（无光版或未刷 ProSuite），下方底层寄存器开关仅在 ProSuite 固件下可用，开机自启照常生效。",
+    prosuite_required_hint: "当前为原厂固件（无光版或未刷 Ember），下方底层寄存器开关仅在 Ember 固件下可用，开机自启照常生效。",
     ota_norgb_blocked: "安全保护已锁定：当前为无光版（Lite），禁止刷入 Pro RGB 固件以免键盘变砖。",
 };
 
@@ -416,7 +416,7 @@ static EN: Strings = Strings {
     ota_select_bin: "Select Firmware (.bin)",
     ota_flash_btn: "Flash Firmware",
     ota_rollback_official: "Roll Back to Stock Firmware",
-    ota_prosuite_btn: "Flash ProSuite Firmware",
+    ota_prosuite_btn: "Flash Ember Firmware",
     ota_usb_only: "Connect via USB wired mode before flashing",
     ota_valid: "Firmware image verified",
     ota_invalid: "Invalid firmware image",
@@ -431,7 +431,7 @@ static EN: Strings = Strings {
     nav_logo_light: "Logo Light",
     logo_rgb_title: "Logo Strip Lighting",
     logo_rgb_sub: "Crush 80 Non-RGB · Control the 5 front badge effects & color",
-    prosuite_required_hint: "Stock firmware detected (Non-RGB or non-ProSuite). Low-level hardware register switches require ProSuite firmware; Windows Auto-Start works normally.",
+    prosuite_required_hint: "Stock firmware detected (Non-RGB or non-Ember). Low-level hardware register switches require Ember firmware; Windows Auto-Start works normally.",
     ota_norgb_blocked: "Safety Lock: Crush 80 Non-RGB (Lite) detected. Flashing Pro RGB firmware is blocked to prevent bricking.",
 };
 
@@ -550,7 +550,7 @@ static JA: Strings = Strings {
     ota_select_bin: "ファームウェア選択 (.bin)",
     ota_flash_btn: "書き込み開始",
     ota_rollback_official: "純正ファームウェアに戻す",
-    ota_prosuite_btn: "ProSuite ファームウェアを書込",
+    ota_prosuite_btn: "Ember ファームウェアを書込",
     ota_usb_only: "書き込み前に USB 有線で接続してください",
     ota_valid: "ファームウェア検証 OK",
     ota_invalid: "無効なファームウェアファイル",
@@ -565,7 +565,7 @@ static JA: Strings = Strings {
     nav_logo_light: "ロゴライト",
     logo_rgb_title: "ロゴライト制御",
     logo_rgb_sub: "無光版専用・前面ロゴバーの 5 モードとカラーを設定",
-    prosuite_required_hint: "純正ファームウェア（無光版または ProSuite 未導入）のため、底層レジスタ設定は ProSuite 環境でのみ利用可能です。自動起動は通常通り動作します。",
+    prosuite_required_hint: "純正ファームウェア（無光版または Ember 未導入）のため、底層レジスタ設定は Ember 環境でのみ利用可能です。自動起動は通常通り動作します。",
     ota_norgb_blocked: "安全ロック：Crush 80 無光版（Lite）を検出しました。故障防止のため Pro RGB ファームウェアの書き込みを禁止しています。",
 };
 

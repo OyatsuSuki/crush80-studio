@@ -76,11 +76,11 @@ pub fn known_firmware_name_opt(crc: u32) -> Option<&'static str> {
         0x239D_8875 => Some("NativeHeld refactored"),
         0x1BF4_AA83 => Some("NativeHeld QMK/VIA Tap-Hold"),
         0x13DA_DB12 => Some("NativeHeld QMK/VIA Watchdog"),
-        0x2F4F_4974 => Some("NativeHeld v1.3.0"),
-        0xAF71_3C2C => Some("NativeHeld v1.3.0 + WebRainbow"),
-        0x99FC_FDBD => Some("NativeHeld v1.3.0 + ProSuite v1"),
-        0x4859_A8C5 => Some("NativeHeld v1.3.0 + ProSuite v2"),
-        0xC03D_5821 => Some("NativeHeld v1.3.0 + ProSuite v3"),
+        0x2F4F_4974 => Some("NativeHeld"),
+        0xAF71_3C2C => Some("Ember"),
+        0x99FC_FDBD => Some("Ember"),
+        0x4859_A8C5 => Some("Ember"),
+        0xC03D_5821 => Some("Ember"),
         _ => None,
     }
 }
