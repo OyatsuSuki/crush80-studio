@@ -561,15 +561,19 @@ impl Crush80Hid {
         let bat_raw = Self::via_cmd(h, &[0x08, 0x03, 0xFE, 0xFF])
             .map(|r| r[3])
             .unwrap_or(255);
+        let logo_rb = get(33)? != 0;
+        let logo_idx = get(34)?.min(44);
+        let side_rb = get(37)? != 0;
+        let side_idx = get(38)?.min(44);
         Ok(HardwareConfig {
             win_lock: get(21)? != 0,
             mac_mode: os_probe != 0,
             low_latency: get(29)? != 0,
             logo_mode: get(32)?,
-            logo_color: get(33)?,
+            logo_color: if logo_rb { 0xFF } else { logo_idx },
             logo_on: get(35)? == 0,
             side_mode: get(36)?,
-            side_color: get(37)?,
+            side_color: if side_rb { 0xFF } else { side_idx },
             side_on: get(39)? == 0,
             sys_rgb_on: get(40)? == 0,
             tapping_term_ms: if tt_units == 0 { 200 } else { (tt_units as u16) * 10 },
@@ -747,10 +751,20 @@ impl Crush80Hid {
             Self::via_cmd(&h, &[0x07, 0x03, 26, if hw.mac_mode { 0x01 } else { 0x00 }])?;
             Self::via_cmd(&h, &[0x07, 0x03, 29, if hw.low_latency { 0xFF } else { 0x00 }])?;
             Self::via_cmd(&h, &[0x07, 0x03, 32, hw.logo_mode])?;
-            Self::via_cmd(&h, &[0x07, 0x03, 33, hw.logo_color])?;
+            if hw.logo_color == 0xFF {
+                Self::via_cmd(&h, &[0x07, 0x03, 33, 0xFF])?;
+            } else {
+                Self::via_cmd(&h, &[0x07, 0x03, 33, 0x00])?;
+                Self::via_cmd(&h, &[0x07, 0x03, 34, hw.logo_color.min(44)])?;
+            }
             Self::via_cmd(&h, &[0x07, 0x03, 35, if hw.logo_on { 0x00 } else { 0x01 }])?;
             Self::via_cmd(&h, &[0x07, 0x03, 36, hw.side_mode])?;
-            Self::via_cmd(&h, &[0x07, 0x03, 37, hw.side_color])?;
+            if hw.side_color == 0xFF {
+                Self::via_cmd(&h, &[0x07, 0x03, 37, 0xFF])?;
+            } else {
+                Self::via_cmd(&h, &[0x07, 0x03, 37, 0x00])?;
+                Self::via_cmd(&h, &[0x07, 0x03, 38, hw.side_color.min(44)])?;
+            }
             Self::via_cmd(&h, &[0x07, 0x03, 39, if hw.side_on { 0x00 } else { 0x01 }])?;
             Self::via_cmd(&h, &[0x07, 0x03, 40, if hw.sys_rgb_on { 0x00 } else { 0x01 }])?;
             let tt_units = if hw.tapping_term_ms == 0 {

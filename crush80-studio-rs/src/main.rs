@@ -1791,14 +1791,14 @@ impl Crush80App {
                         let _ = self.hid.set_config_byte(33, 0xFF, false);
                     }
                     let dots = [
-                        (0u8, Color32::from_rgb(244, 63, 94)),
-                        (1, Color32::from_rgb(251, 146, 60)),
-                        (2, Color32::from_rgb(250, 204, 21)),
-                        (3, Color32::from_rgb(52, 211, 153)),
-                        (4, CYAN),
-                        (5, Color32::from_rgb(96, 165, 250)),
-                        (6, VIOLET),
-                        (7, TEXT_PRI),
+                        (0u8, Color32::from_rgb(255, 20, 20)),
+                        (3, Color32::from_rgb(255, 110, 0)),
+                        (6, Color32::from_rgb(255, 235, 0)),
+                        (14, Color32::from_rgb(34, 211, 94)),
+                        (21, CYAN),
+                        (29, Color32::from_rgb(59, 130, 246)),
+                        (34, VIOLET),
+                        (38, Color32::from_rgb(244, 63, 180)),
                     ];
                     for (c, col) in dots {
                         let (r, resp) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::click());
@@ -1809,7 +1809,8 @@ impl Crush80App {
                         if resp.clicked() {
                             self.mark_ui_edit();
                             self.hw.logo_color = c;
-                            let _ = self.hid.set_config_byte(33, c, false);
+                            let _ = self.hid.set_config_byte(33, 0x00, false);
+                            let _ = self.hid.set_config_byte(34, c, false);
                         }
                     }
                 });
@@ -1849,14 +1850,14 @@ impl Crush80App {
                         let _ = self.hid.set_config_byte(37, 0xFF, false);
                     }
                     let dots = [
-                        (0u8, Color32::from_rgb(244, 63, 94)),
-                        (1, Color32::from_rgb(251, 146, 60)),
-                        (2, Color32::from_rgb(250, 204, 21)),
-                        (3, Color32::from_rgb(52, 211, 153)),
-                        (4, CYAN),
-                        (5, Color32::from_rgb(96, 165, 250)),
-                        (6, VIOLET),
-                        (7, TEXT_PRI),
+                        (0u8, Color32::from_rgb(255, 20, 20)),
+                        (3, Color32::from_rgb(255, 110, 0)),
+                        (6, Color32::from_rgb(255, 235, 0)),
+                        (14, Color32::from_rgb(34, 211, 94)),
+                        (21, CYAN),
+                        (29, Color32::from_rgb(59, 130, 246)),
+                        (34, VIOLET),
+                        (38, Color32::from_rgb(244, 63, 180)),
                     ];
                     for (c, col) in dots {
                         let (r, resp) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::click());
@@ -1867,7 +1868,8 @@ impl Crush80App {
                         if resp.clicked() {
                             self.mark_ui_edit();
                             self.hw.side_color = c;
-                            let _ = self.hid.set_config_byte(37, c, false);
+                            let _ = self.hid.set_config_byte(37, 0x00, false);
+                            let _ = self.hid.set_config_byte(38, c, false);
                         }
                     }
                 });
