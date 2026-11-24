@@ -2,6 +2,7 @@
 
 mod autoswitch;
 mod hid_win;
+mod hid_worker;
 mod i18n;
 mod keycodes;
 mod macro_codec;
