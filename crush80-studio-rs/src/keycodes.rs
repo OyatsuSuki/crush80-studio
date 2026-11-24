@@ -1,15 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BoardEdition {
+    #[default]
     ProRgb,
     LiteNoRgb,
-}
-
-impl Default for BoardEdition {
-    fn default() -> Self {
-        BoardEdition::ProRgb
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -433,7 +428,7 @@ pub fn factory_default_key_for(edition: BoardEdition, layer: usize, row: u8, col
             0x7F07 => 0x7F08, // LOMODE
             0x7F08 => 0x7F09, // LOCOLOUR
             0x7F09 => 0x7F0A, // LOPOWER
-            0x7F0A | 0x7F0B | 0x7F0C => 0x0001, // Side RGB absent on Non-RGB -> KC_TRNS
+            0x7F0A..=0x7F0C => 0x0001, // Side RGB absent on Non-RGB -> KC_TRNS
             0x7F0D => 0x7F07, // KSDELAY
             0x7F0E => 0x7F0B, // SYSPOWER
             0x7F0F => 0x7F0C, // BATTST
@@ -702,10 +697,10 @@ mod tests {
 
     fn build_factory_layers(edition: BoardEdition) -> [[u16; 128]; 4] {
         let mut layers = [[0u16; 128]; 4];
-        for l in 0..4 {
+        for (l, layer) in layers.iter_mut().enumerate() {
             for r in 0..8 {
                 for c in 0..16 {
-                    layers[l][r * 16 + c] = factory_default_key_for(edition, l, r as u8, c as u8);
+                    layer[r * 16 + c] = factory_default_key_for(edition, l, r as u8, c as u8);
                 }
             }
         }

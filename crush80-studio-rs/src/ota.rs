@@ -95,7 +95,7 @@ pub fn sha256_hex(data: &[u8]) -> String {
         0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
     ];
     let bit_len = (data.len() as u64).wrapping_mul(8);
-    let mut msg = Vec::with_capacity(((data.len() + 9 + 63) / 64) * 64);
+    let mut msg = Vec::with_capacity((data.len() + 9).div_ceil(64) * 64);
     msg.extend_from_slice(data);
     msg.push(0x80);
     while (msg.len() % 64) != 56 {
@@ -103,7 +103,7 @@ pub fn sha256_hex(data: &[u8]) -> String {
     }
     msg.extend_from_slice(&bit_len.to_be_bytes());
 
-    for chunk in msg.chunks_exact(64) {
+    for chunk in msg.as_chunks::<64>().0 {
         let mut w = [0u32; 64];
         for i in 0..16 {
             w[i] = u32::from_be_bytes([
@@ -526,7 +526,7 @@ pub fn flash_firmware_async(
             }
 
             // Prepare 16-byte padded blocks (3 blocks per 64-byte HID packet)
-            let count = (image.len() + 15) / 16;
+            let count = image.len().div_ceil(16);
             let mut padded = Vec::with_capacity(count * 16);
             padded.extend_from_slice(&image);
             padded.resize(count * 16, 0xFF);
@@ -556,7 +556,7 @@ pub fn flash_firmware_async(
                 }
                 pkt_idx += 1;
                 let sent_blocks = (first + 3).min(count);
-                if pkt_idx % 16 == 0 || sent_blocks == count {
+                if pkt_idx.is_multiple_of(16) || sent_blocks == count {
                     let frac = 0.05 + 0.85 * (sent_blocks as f32 / count as f32);
                     set_progress(
                         &progress,

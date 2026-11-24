@@ -306,6 +306,7 @@ pub fn spawn_tray(state: Arc<TrayState>) {
         }
         state.hwnd.store(hwnd as isize, Ordering::SeqCst);
 
+        #[allow(clippy::manual_dangling_ptr)]
         let mut hicon = LoadIconW(hinst, 1 as *const u16);
         if hicon.is_null() {
             hicon = LoadIconW(null_mut(), IDI_APPLICATION);

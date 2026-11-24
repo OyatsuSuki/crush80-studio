@@ -1,0 +1,10 @@
+pub mod autoswitch;
+pub mod hardware;
+pub mod keymap;
+pub mod macros;
+pub mod ota;
+pub mod profiles;
+pub mod rgb;
+pub mod tester;
+pub mod theme;
+pub mod widgets;

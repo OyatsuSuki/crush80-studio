@@ -120,7 +120,7 @@ fn find_hid_devices(target_usage_page: u16) -> Vec<HidMatch> {
             }
 
             // Allocate 4-byte aligned backing storage to satisfy SP_DEVICE_INTERFACE_DETAIL_DATA_W alignment.
-            let mut aligned_buf = vec![0u32; (req_size as usize + 3) / 4];
+            let mut aligned_buf = vec![0u32; (req_size as usize).div_ceil(4)];
             let detail = aligned_buf.as_mut_ptr() as *mut SP_DEVICE_INTERFACE_DETAIL_DATA_W;
             (*detail).cbSize = if size_of::<usize>() == 8 { 8 } else { 6 };
 
@@ -171,16 +171,16 @@ fn find_hid_devices(target_usage_page: u16) -> Vec<HidMatch> {
                 let mut ppd: isize = 0;
                 if HidD_GetPreparsedData(h, &mut ppd) != 0 {
                     let mut caps: HIDP_CAPS = zeroed();
-                    if HidP_GetCaps(ppd, &mut caps) == HIDP_STATUS_SUCCESS {
-                        if caps.UsagePage == target_usage_page {
-                            results.push(HidMatch {
-                                path: path.clone(),
-                                pid: attrs.ProductID,
-                                usage_page: caps.UsagePage,
-                                input_len: caps.InputReportByteLength as usize,
-                                output_len: caps.OutputReportByteLength as usize,
-                            });
-                        }
+                    if HidP_GetCaps(ppd, &mut caps) == HIDP_STATUS_SUCCESS
+                        && caps.UsagePage == target_usage_page
+                    {
+                        results.push(HidMatch {
+                            path: path.clone(),
+                            pid: attrs.ProductID,
+                            usage_page: caps.UsagePage,
+                            input_len: caps.InputReportByteLength as usize,
+                            output_len: caps.OutputReportByteLength as usize,
+                        });
                     }
                     HidD_FreePreparsedData(ppd);
                 }
@@ -520,10 +520,10 @@ impl Crush80Hid {
             offset += size;
         }
         let mut layers = [[0u16; 128]; 4];
-        for l in 0..4 {
-            for i in 0..128 {
+        for (l, layer) in layers.iter_mut().enumerate() {
+            for (i, cell) in layer.iter_mut().enumerate() {
                 let p = l * 256 + i * 2;
-                layers[l][i] = ((buf[p] as u16) << 8) | (buf[p + 1] as u16);
+                *cell = ((buf[p] as u16) << 8) | (buf[p + 1] as u16);
             }
         }
         Ok(layers)
@@ -864,7 +864,7 @@ fn to_hex(bytes: &[u8]) -> String {
 }
 
 fn from_hex(s: &str) -> Result<Vec<u8>, String> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return Err("无效的 hex 长度".into());
     }
     let mut out = Vec::with_capacity(s.len() / 2);
@@ -950,10 +950,12 @@ mod tests {
 
     #[test]
     fn test_apply_snapshot_ram_only_skips_save_0x09() {
-        let mut hw = HardwareConfig::default();
-        hw.prosuite_supported = true;
-        hw.logo_mode = 99; // out-of-range, must clamp to 3
-        hw.side_mode = 42; // out-of-range, must clamp to 3
+        let hw = HardwareConfig {
+            prosuite_supported: true,
+            logo_mode: 99, // out-of-range, must clamp to 3
+            side_mode: 42, // out-of-range, must clamp to 3
+            ..Default::default()
+        };
         let snap = FullSnapshot {
             timestamp: "2026-11-25".into(),
             keymap_hex: "00".repeat(KEYMAP_BYTES),

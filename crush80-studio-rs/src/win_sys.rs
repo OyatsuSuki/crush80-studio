@@ -195,6 +195,7 @@ pub fn acquire_single_instance() -> Option<SingleInstanceGuard> {
 // 2. Windows Auto-Start (HKCU\...\Run via advapi32.dll)
 // ============================================================================
 
+#[allow(clippy::upper_case_acronyms)]
 type HKEY = *mut c_void;
 
 // Sign-extended 0x80000001 matches Win32 `((HKEY)(ULONG_PTR)((LONG)0x80000001))` on both x86 and x64.
@@ -263,11 +264,11 @@ pub fn is_autostart_enabled() -> bool {
             null_mut(),
             &mut cb_data,
         );
-        if status != ERROR_SUCCESS || val_type != REG_SZ || cb_data < 4 || cb_data > 65536 {
+        if status != ERROR_SUCCESS || val_type != REG_SZ || !(4..=65536).contains(&cb_data) {
             RegCloseKey(hkey);
             return false;
         }
-        let mut buf = vec![0u16; (cb_data as usize + 1) / 2];
+        let mut buf = vec![0u16; (cb_data as usize).div_ceil(2)];
         let mut cb2 = cb_data;
         let status2 = RegQueryValueExW(
             hkey,
@@ -364,7 +365,7 @@ const OFN_FILEMUSTEXIST: u32 = 0x0000_1000;
 const OFN_EXPLORER: u32 = 0x0008_0000;
 
 #[repr(C)]
-#[allow(non_snake_case)]
+#[allow(non_snake_case, clippy::upper_case_acronyms)]
 struct OPENFILENAMEW {
     lStructSize: u32,
     hwndOwner: HWND,

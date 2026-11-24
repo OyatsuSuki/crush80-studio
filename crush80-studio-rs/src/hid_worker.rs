@@ -70,7 +70,7 @@ pub enum HidCmd {
 pub enum HidEvent {
     FullRefresh {
         status: DeviceStatus,
-        layers: Option<[[u16; 128]; 4]>,
+        layers: Option<Box<[[u16; 128]; 4]>>,
         macros_raw: Option<Vec<u8>>,
         rgb: Option<RgbState>,
         hw: Option<HardwareConfig>,
@@ -291,7 +291,7 @@ impl HidWorkerHandle {
 
                             if status.connected {
                                 match hid.read_keymap() {
-                                    Ok(km) => layers = Some(km),
+                                    Ok(km) => layers = Some(Box::new(km)),
                                     Err(e) => warnings.push(format!("键位读取失败: {}", e)),
                                 }
                                 match hid.read_macros() {
@@ -516,8 +516,10 @@ impl HidWorkerHandle {
                                 if changed {
                                     last_connected = true;
                                     last_pid = PID_BLUETOOTH;
-                                    let mut hw = HardwareConfig::default();
-                                    hw.battery = bt.battery;
+                                    let hw = HardwareConfig {
+                                        battery: bt.battery,
+                                        ..Default::default()
+                                    };
                                     last_hw = Some(hw.clone());
                                     let _ = ev_tx.send(HidEvent::LiveUpdate {
                                         connected: true,

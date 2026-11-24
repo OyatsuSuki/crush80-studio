@@ -1,16 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Lang {
+    #[default]
     Zh,
     En,
     Ja,
-}
-
-impl Default for Lang {
-    fn default() -> Self {
-        Lang::Zh
-    }
 }
 
 pub struct Strings {
@@ -157,6 +152,14 @@ pub struct Strings {
     pub logo_rgb_sub: &'static str,
     pub prosuite_required_hint: &'static str,
     pub ota_norgb_blocked: &'static str,
+    pub ota_confirm_title: &'static str,
+    pub ota_confirm_btn: &'static str,
+    pub ota_cancel_btn: &'static str,
+    pub ota_risk_ack: &'static str,
+    pub ota_unknown_src_warn: &'static str,
+    pub ota_unknown_img_warn: &'static str,
+    pub subtitle_pro: &'static str,
+    pub subtitle_lite: &'static str,
 }
 
 pub fn tr(lang: Lang) -> &'static Strings {
@@ -299,6 +302,14 @@ static ZH: Strings = Strings {
     logo_rgb_sub: "无光版专属 · 控制正面灯条的 5 种灯效与颜色",
     prosuite_required_hint: "当前为原厂固件（无光版或未刷 Ember），下方底层寄存器开关仅在 Ember 固件下可用，开机自启照常生效。",
     ota_norgb_blocked: "安全保护已锁定：当前为无光版（Lite），禁止刷入 Pro RGB 固件以免键盘变砖。",
+    ota_confirm_title: "确认刷写固件",
+    ota_confirm_btn: "确认开始刷写",
+    ota_cancel_btn: "取消",
+    ota_risk_ack: "我已知晓风险，确认继续强制刷写",
+    ota_unknown_src_warn: "警告：当前键盘固件 CRC 不在已知 Pro RGB 白名单中！",
+    ota_unknown_img_warn: "警告：所选固件为未知自定义镜像，未经官方校验！",
+    subtitle_pro: "PRO REBOOT",
+    subtitle_lite: "LITE · NO-RGB",
 };
 
 static EN: Strings = Strings {
@@ -433,6 +444,14 @@ static EN: Strings = Strings {
     logo_rgb_sub: "Crush 80 Non-RGB · Control the 5 front badge effects & color",
     prosuite_required_hint: "Stock firmware detected (Non-RGB or non-Ember). Low-level hardware register switches require Ember firmware; Windows Auto-Start works normally.",
     ota_norgb_blocked: "Safety Lock: Crush 80 Non-RGB (Lite) detected. Flashing Pro RGB firmware is blocked to prevent bricking.",
+    ota_confirm_title: "Confirm Firmware Flash",
+    ota_confirm_btn: "Confirm & Flash",
+    ota_cancel_btn: "Cancel",
+    ota_risk_ack: "I understand the brick risk and choose to proceed",
+    ota_unknown_src_warn: "Warning: Current device CRC is not in the verified Pro RGB source list!",
+    ota_unknown_img_warn: "Warning: Target firmware is an unrecognized custom image!",
+    subtitle_pro: "PRO REBOOT",
+    subtitle_lite: "LITE · NO-RGB",
 };
 
 static JA: Strings = Strings {
@@ -567,6 +586,14 @@ static JA: Strings = Strings {
     logo_rgb_sub: "無光版専用・前面ロゴバーの 5 モードとカラーを設定",
     prosuite_required_hint: "純正ファームウェア（無光版または Ember 未導入）のため、底層レジスタ設定は Ember 環境でのみ利用可能です。自動起動は通常通り動作します。",
     ota_norgb_blocked: "安全ロック：Crush 80 無光版（Lite）を検出しました。故障防止のため Pro RGB ファームウェアの書き込みを禁止しています。",
+    ota_confirm_title: "ファームウェア書込確認",
+    ota_confirm_btn: "確認して書込開始",
+    ota_cancel_btn: "キャンセル",
+    ota_risk_ack: "故障リスクを理解し、強制書き込みを続行します",
+    ota_unknown_src_warn: "警告：現在の本体 CRC は確認済み Pro RGB 一覧に含まれていません！",
+    ota_unknown_img_warn: "警告：選択したファイルは未確認のカスタムファームウェアです！",
+    subtitle_pro: "PRO REBOOT",
+    subtitle_lite: "LITE · NO-RGB",
 };
 
 pub fn norgb_effect_label(lang: Lang, id: u8) -> &'static str {
