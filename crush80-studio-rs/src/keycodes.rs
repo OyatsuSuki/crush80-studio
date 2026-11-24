@@ -132,28 +132,6 @@ pub fn special_keycodes_for(edition: BoardEdition) -> &'static [(u16, &'static s
     }
 }
 
-pub const RGB_EFFECTS: &[(u8, &str)] = &[
-    (0, "00 · 关闭背光"),
-    (1, "01 · 彩虹波浪"),
-    (2, "02 · 七彩云朵"),
-    (3, "03 · 旋涡流光"),
-    (4, "04 · 混彩渐变"),
-    (5, "05 · 呼吸模式"),
-    (6, "06 · 纯色常亮"),
-    (7, "07 · 单点亮起"),
-    (8, "08 · 涟漪扩散"),
-    (9, "09 · 激光横扫"),
-    (10, "10 · 繁星点点"),
-    (11, "11 · 百花齐放 (重启易变02)"),
-    (12, "12 · 穿梭流光"),
-    (13, "13 · 律动波纹"),
-    (14, "14 · 流星雨"),
-    (15, "15 · 矩阵雨滴"),
-    (16, "16 · 往复扫描"),
-    (17, "17 · 触发变色"),
-    (18, "18 · 中心扩散"),
-];
-
 fn localized_label(code: u16, lang: crate::i18n::Lang) -> Option<&'static str> {
     use crate::i18n::Lang;
     match lang {
@@ -308,12 +286,12 @@ fn localized_norgb_wob_label(code: u16, lang: crate::i18n::Lang) -> Option<&'sta
     }
 }
 
-pub fn decode_keycode(code: u16) -> DecodedKey {
-    decode_keycode_for(code, crate::i18n::Lang::Zh, BoardEdition::ProRgb)
-}
-
 pub fn decode_keycode_lang(code: u16, lang: crate::i18n::Lang) -> DecodedKey {
     decode_keycode_for(code, lang, BoardEdition::ProRgb)
+}
+
+pub fn basic_keycode_label(code: u16, lang: crate::i18n::Lang) -> String {
+    decode_keycode_for(code, lang, BoardEdition::ProRgb).label
 }
 
 pub fn decode_keycode_for(code: u16, lang: crate::i18n::Lang, edition: BoardEdition) -> DecodedKey {
@@ -433,20 +411,17 @@ pub const FACTORY_KEYMAP: [[u16; 128]; 4] = [
     ],
 ];
 
-pub fn factory_default_key(layer: usize, row: u8, col: u8) -> u16 {
-    factory_default_key_for(BoardEdition::ProRgb, layer, row, col)
-}
-
 pub fn factory_default_key_for(edition: BoardEdition, layer: usize, row: u8, col: u8) -> u16 {
     if layer >= 4 || row >= 8 || col >= 16 {
         return 0;
     }
     if edition == BoardEdition::LiteNoRgb {
         // Account for the 4 swapped matrix coordinates in official Crush 80 Non-RGB PCB:
-        // (4,12)=RShift, (4,13)=F13(Mute), (5,6)=Space/Batt, (5,8)=Menu(RWin), (5,11)=unused
+        // (4,12)=RShift, (4,13)=F13(Mute), (5,5)=unused, (5,6)=Space/Batt, (5,8)=Menu(RWin), (5,11)=unused
         let (src_r, src_c) = match (row, col) {
             (4, 12) => (4, 13),
             (4, 13) => (4, 12),
+            (5, 5) => return 0x0000,
             (5, 6) => (5, 5),
             (5, 8) => (5, 11),
             (5, 11) => return 0x0000,
@@ -469,15 +444,20 @@ pub fn factory_default_key_for(edition: BoardEdition, layer: usize, row: u8, col
     FACTORY_KEYMAP[layer][idx]
 }
 
-/// Auto-detects Crush 80 Pro (RGB) vs Lite (Non-RGB) from the live Layer 0 keymap matrix.
-/// On Pro RGB: (4,13)=KC_RSFT(0x00E5), (5,5)=KC_SPC(0x002C), (5,6)=0x0000.
-/// On Lite Non-RGB: (4,12)=KC_RSFT(0x00E5), (5,6)=KC_SPC(0x002C).
+fn is_space_like(code: u16) -> bool {
+    code == 0x002C || ((0x4000..=0x7FFF).contains(&code) && (code & 0x00FF) == 0x2C)
+}
+
+/// Auto-detects Crush 80 Pro (RGB) vs Lite (Non-RGB) from the live keymap matrix.
+/// Resilient to common user remaps such as `LT(1, Space)` or Mod-Tap RShift.
 pub fn detect_edition_from_keymap(layers: &[[u16; 128]; 4]) -> Option<BoardEdition> {
     let l0 = &layers[0];
     let r4c12 = l0[4 * 16 + 12];
     let r4c13 = l0[4 * 16 + 13];
     let r5c5 = l0[5 * 16 + 5];
     let r5c6 = l0[5 * 16 + 6];
+    let r5c8 = l0[5 * 16 + 8];
+    let r5c11 = l0[5 * 16 + 11];
     let l1 = &layers[1];
 
     let mut norgb_score = 0i32;
@@ -485,8 +465,12 @@ pub fn detect_edition_from_keymap(layers: &[[u16; 128]; 4]) -> Option<BoardEditi
 
     if r4c12 == 0x00E5 { norgb_score += 3; }
     if r4c13 == 0x00E5 { rgb_score += 3; }
-    if r5c6 == 0x002C { norgb_score += 3; }
-    if r5c5 == 0x002C && r5c6 == 0x0000 { rgb_score += 3; }
+    if is_space_like(r5c6) && r5c5 == 0x0000 { norgb_score += 4; }
+    else if is_space_like(r5c6) { norgb_score += 3; }
+    if is_space_like(r5c5) && r5c6 == 0x0000 { rgb_score += 4; }
+    // Menu/RWin position: Lite=(5,8) with (5,11)=unused; Pro=(5,11) with (5,8)=unused
+    if r5c8 != 0x0000 && r5c11 == 0x0000 { norgb_score += 2; }
+    if r5c11 != 0x0000 && r5c8 == 0x0000 { rgb_score += 2; }
     // On Pro RGB L1, 0x7F0D/0x7F0E/0x7F0F exist; on Non-RGB, max custom code is 0x7F0C
     if l1.iter().any(|&c| (0x7F0D..=0x7F0F).contains(&c)) {
         rgb_score += 2;
@@ -710,3 +694,65 @@ pub const CRUSH80_LAYOUT_NORGB: &[PhysicalKey] = &[
     PhysicalKey { r: 5, c: 14, x: 16.25, y: 5.25, w: 1.0, style: 1 },
     PhysicalKey { r: 5, c: 15, x: 17.25, y: 5.25, w: 1.0, style: 1 },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::i18n::Lang;
+
+    fn build_factory_layers(edition: BoardEdition) -> [[u16; 128]; 4] {
+        let mut layers = [[0u16; 128]; 4];
+        for l in 0..4 {
+            for r in 0..8 {
+                for c in 0..16 {
+                    layers[l][r * 16 + c] = factory_default_key_for(edition, l, r as u8, c as u8);
+                }
+            }
+        }
+        layers
+    }
+
+    #[test]
+    fn test_detect_edition_pro_and_lite_stock() {
+        let pro = build_factory_layers(BoardEdition::ProRgb);
+        let lite = build_factory_layers(BoardEdition::LiteNoRgb);
+        assert_eq!(detect_edition_from_keymap(&pro), Some(BoardEdition::ProRgb));
+        assert_eq!(detect_edition_from_keymap(&lite), Some(BoardEdition::LiteNoRgb));
+    }
+
+    #[test]
+    fn test_detect_edition_lite_with_remapped_lt_space() {
+        let mut lite = build_factory_layers(BoardEdition::LiteNoRgb);
+        // User remaps Spacebar (5,6) to LT(1, KC_SPC) and RShift (4,12) to MT(RSFT, Enter)
+        lite[0][5 * 16 + 6] = 0x412C;
+        lite[0][4 * 16 + 12] = 0x2028;
+        assert_eq!(detect_edition_from_keymap(&lite), Some(BoardEdition::LiteNoRgb));
+    }
+
+    #[test]
+    fn test_lite_factory_default_zeroes_r5c5_and_swaps_4_coords() {
+        assert_eq!(factory_default_key_for(BoardEdition::LiteNoRgb, 0, 5, 5), 0x0000);
+        assert_eq!(factory_default_key_for(BoardEdition::LiteNoRgb, 0, 5, 6), 0x002C);
+        assert_eq!(factory_default_key_for(BoardEdition::LiteNoRgb, 0, 4, 12), 0x00E5);
+        assert_eq!(factory_default_key_for(BoardEdition::LiteNoRgb, 0, 4, 13), 0x00A8);
+        assert_eq!(factory_default_key_for(BoardEdition::LiteNoRgb, 0, 5, 8), 0x0065);
+        assert_eq!(factory_default_key_for(BoardEdition::LiteNoRgb, 0, 5, 11), 0x0000);
+    }
+
+    #[test]
+    fn test_layouts_within_matrix_bounds() {
+        for layout in [CRUSH80_LAYOUT, CRUSH80_LAYOUT_NORGB] {
+            assert_eq!(layout.len(), 88);
+            for k in layout {
+                assert!(k.r < 8 && k.c < 16, "out of bounds ({},{})", k.r, k.c);
+            }
+        }
+    }
+
+    #[test]
+    fn test_basic_keycode_label_localized() {
+        assert_eq!(basic_keycode_label(0x00A8, Lang::Zh), "静音");
+        assert_eq!(basic_keycode_label(0x00A8, Lang::En), "Mute");
+        assert_eq!(basic_keycode_label(0x00A8, Lang::Ja), "消音");
+    }
+}

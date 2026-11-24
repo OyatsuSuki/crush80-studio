@@ -115,6 +115,20 @@ pub fn decode_macro_buffer(buf: &[u8]) -> Vec<Vec<MacroStep>> {
     slots
 }
 
+/// Validate macro text input before inserting or encoding:
+/// firmware macro stream only supports printable ASCII (`0x20..=0x7E`).
+pub fn validate_macro_text(s: &str) -> Result<(), String> {
+    for &b in s.as_bytes() {
+        if !(0x20..=0x7E).contains(&b) {
+            return Err(format!(
+                "宏文本仅支持可打印 ASCII 字符 (0x20..=0x7E)，检测到字节 0x{:02X}",
+                b
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Encode up to 16 macro slots into an exact 512-byte VIA/NativeHeld macro buffer.
 pub fn encode_macro_buffer(slots: &[Vec<MacroStep>]) -> Result<Vec<u8>, String> {
     if slots.len() > MACRO_SLOT_COUNT {
@@ -132,27 +146,30 @@ pub fn encode_macro_buffer(slots: &[Vec<MacroStep>]) -> Result<Vec<u8>, String> 
             for step in slot {
                 match step {
                     MacroStep::Text(s) => {
-                        for &b in s.as_bytes() {
-                            if b < 0x02 || b > 0x7F {
-                                return Err(format!(
-                                    "Macro slot {} contains non-ASCII or control byte 0x{:02X}",
-                                    idx, b
-                                ));
-                            }
-                            out.push(b);
-                        }
+                        validate_macro_text(s)
+                            .map_err(|e| format!("Macro slot {}: {}", idx, e))?;
+                        out.extend_from_slice(s.as_bytes());
                     }
                     MacroStep::Tap(kc) => {
+                        if *kc == 0x00 {
+                            return Err(format!("Macro slot {} contains invalid keycode 0x00", idx));
+                        }
                         out.push(0x01);
                         out.push(0x01);
                         out.push(*kc);
                     }
                     MacroStep::Down(kc) => {
+                        if *kc == 0x00 {
+                            return Err(format!("Macro slot {} contains invalid keycode 0x00", idx));
+                        }
                         out.push(0x01);
                         out.push(0x02);
                         out.push(*kc);
                     }
                     MacroStep::Up(kc) => {
+                        if *kc == 0x00 {
+                            return Err(format!("Macro slot {} contains invalid keycode 0x00", idx));
+                        }
                         out.push(0x01);
                         out.push(0x03);
                         out.push(*kc);
@@ -455,8 +472,9 @@ mod tests {
 
         let encoded = encode_macro_buffer(&slots).expect("encode");
         assert_eq!(encoded.len(), MACRO_BUFFER_SIZE);
-        assert_eq!(&encoded[0..18], b"\x01\x02\xe0\x01\x01\x06\x01\x03\xe0\x01\x04150|hello!");
-        assert_eq!(encoded[18], 0x00);
+        let expected = b"\x01\x02\xe0\x01\x01\x06\x01\x03\xe0\x01\x04150|hello!";
+        assert_eq!(&encoded[0..expected.len()], expected);
+        assert_eq!(encoded[expected.len()], 0x00);
 
         let decoded = decode_macro_buffer(&encoded);
         assert_eq!(decoded, slots);
@@ -478,5 +496,25 @@ mod tests {
         let mut slots: Vec<Vec<MacroStep>> = vec![Vec::new(); 16];
         slots[0] = vec![MacroStep::Text("a".repeat(500))];
         assert!(encode_macro_buffer(&slots).is_err());
+    }
+
+    #[test]
+    fn test_encode_rejects_zero_keycode_in_tap_down_up() {
+        for bad in [MacroStep::Tap(0), MacroStep::Down(0), MacroStep::Up(0)] {
+            let mut slots: Vec<Vec<MacroStep>> = vec![Vec::new(); 16];
+            slots[0] = vec![bad];
+            assert!(encode_macro_buffer(&slots).is_err());
+        }
+    }
+
+    #[test]
+    fn test_encode_rejects_control_chars_and_non_ascii() {
+        for bad in ["\n", "\x07", "\x1F", "\x7F", "中文"] {
+            assert!(validate_macro_text(bad).is_err(), "should reject {:?}", bad);
+            let mut slots: Vec<Vec<MacroStep>> = vec![Vec::new(); 16];
+            slots[0] = vec![MacroStep::Text(bad.to_string())];
+            assert!(encode_macro_buffer(&slots).is_err());
+        }
+        assert!(validate_macro_text("Hello, World! ~09").is_ok());
     }
 }
