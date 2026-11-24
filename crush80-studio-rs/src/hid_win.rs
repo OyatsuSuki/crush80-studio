@@ -1,8 +1,9 @@
 //! Pure-Rust native Win32 HID driver for WOBKEY Crush 80 Pro Reboot (USB 0x5055 + 2.4G 0x5088).
 //! Uses SetupAPI + HID + Overlapped ReadFile/WriteFile directly via `windows-sys` (zero C deps).
 
+use crate::keycodes::BoardEdition;
 use serde::{Deserialize, Serialize};
-use std::mem::{size_of, zeroed};
+use std::mem::{offset_of, size_of, zeroed};
 use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
@@ -22,11 +23,15 @@ const KEYMAP_BYTES: usize = 1024;
 const MACRO_BYTES: usize = 512;
 const CHUNK_SIZE: usize = 16;
 
+pub(crate) trait HidTransport {
+    fn write_report(&self, data: &[u8]) -> Result<(), String>;
+    fn read_report(&self, timeout_ms: u32) -> Result<Vec<u8>, String>;
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct DeviceStatus {
     pub connected: bool,
     pub pid: u16,
-    pub transport: String,
     pub firmware_crc: Option<u32>,
     pub firmware_name: String,
     pub via_protocol: u16,
@@ -70,6 +75,8 @@ pub struct FullSnapshot {
     pub rgb: RgbState,
     #[serde(default)]
     pub hw: Option<HardwareConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edition: Option<BoardEdition>,
 }
 
 pub(crate) struct HidMatch {
@@ -107,12 +114,14 @@ fn find_hid_devices(target_usage_page: u16) -> Vec<HidMatch> {
 
             let mut req_size: u32 = 0;
             SetupDiGetDeviceInterfaceDetailW(dev_info, &iface_data, null_mut(), 0, &mut req_size, null_mut());
-            if req_size == 0 {
+            let min_size = size_of::<SP_DEVICE_INTERFACE_DETAIL_DATA_W>();
+            if (req_size as usize) < min_size {
                 continue;
             }
 
-            let mut buf = vec![0u8; req_size as usize];
-            let detail = buf.as_mut_ptr() as *mut SP_DEVICE_INTERFACE_DETAIL_DATA_W;
+            // Allocate 4-byte aligned backing storage to satisfy SP_DEVICE_INTERFACE_DETAIL_DATA_W alignment.
+            let mut aligned_buf = vec![0u32; (req_size as usize + 3) / 4];
+            let detail = aligned_buf.as_mut_ptr() as *mut SP_DEVICE_INTERFACE_DETAIL_DATA_W;
             (*detail).cbSize = if size_of::<usize>() == 8 { 8 } else { 6 };
 
             if SetupDiGetDeviceInterfaceDetailW(
@@ -127,14 +136,17 @@ fn find_hid_devices(target_usage_page: u16) -> Vec<HidMatch> {
                 continue;
             }
 
-            // Extract null-terminated UTF-16 path
-            let path_ptr = &(*detail).DevicePath as *const u16;
-            let mut path = Vec::new();
-            let mut p = path_ptr;
-            while *p != 0 {
-                path.push(*p);
-                p = p.add(1);
+            // Bounded extraction of null-terminated UTF-16 path within `req_size`.
+            let path_offset = offset_of!(SP_DEVICE_INTERFACE_DETAIL_DATA_W, DevicePath);
+            let max_u16 = (req_size as usize).saturating_sub(path_offset) / size_of::<u16>();
+            if max_u16 == 0 {
+                continue;
             }
+            let path_ptr = &(*detail).DevicePath as *const u16;
+            let raw_slice = std::slice::from_raw_parts(path_ptr, max_u16);
+            let nul_pos = raw_slice.iter().position(|&c| c == 0).unwrap_or(raw_slice.len());
+            let mut path = Vec::with_capacity(nul_pos + 1);
+            path.extend_from_slice(&raw_slice[..nul_pos]);
             path.push(0);
 
             // Query attributes with zero access (works even if exclusively held)
@@ -226,6 +238,9 @@ impl WinHidHandle {
 
         unsafe {
             let ev = CreateEventW(null(), 1, 0, null());
+            if ev.is_null() {
+                return Err(format!("创建 HID 写入事件失败: err={}", GetLastError()));
+            }
             let mut ov: OVERLAPPED = zeroed();
             ov.hEvent = ev;
             let mut written: u32 = 0;
@@ -244,13 +259,27 @@ impl WinHidHandle {
                 }
                 let wait = WaitForSingleObject(ev, 2000);
                 if wait != WAIT_OBJECT_0 {
-                    CancelIo(self.handle);
+                    // Must wait for cancelled IRP completion before freeing `ov` and `buf`.
+                    CancelIoEx(self.handle, &ov);
+                    let mut cancelled_bytes: u32 = 0;
+                    GetOverlappedResult(self.handle, &ov, &mut cancelled_bytes, 1);
                     CloseHandle(ev);
                     return Err("HID 写入超时".into());
                 }
-                GetOverlappedResult(self.handle, &ov, &mut written, 0);
+                if GetOverlappedResult(self.handle, &ov, &mut written, 0) == 0 {
+                    let ov_err = GetLastError();
+                    CloseHandle(ev);
+                    return Err(format!("HID 写入结果异常: err={}", ov_err));
+                }
             }
             CloseHandle(ev);
+            if (written as usize) != buf.len() {
+                return Err(format!(
+                    "HID 写入不完整: 期望 {} 字节，实际 {}",
+                    buf.len(),
+                    written
+                ));
+            }
             Ok(())
         }
     }
@@ -259,6 +288,9 @@ impl WinHidHandle {
         let mut buf = vec![0u8; self.input_len];
         unsafe {
             let ev = CreateEventW(null(), 1, 0, null());
+            if ev.is_null() {
+                return Err(format!("创建 HID 读取事件失败: err={}", GetLastError()));
+            }
             let mut ov: OVERLAPPED = zeroed();
             ov.hEvent = ev;
             let mut read_bytes: u32 = 0;
@@ -277,16 +309,33 @@ impl WinHidHandle {
                 }
                 let wait = WaitForSingleObject(ev, timeout_ms);
                 if wait != WAIT_OBJECT_0 {
-                    CancelIo(self.handle);
+                    // Must wait for cancelled IRP completion before freeing `ov` and `buf`.
+                    CancelIoEx(self.handle, &ov);
+                    let mut cancelled_bytes: u32 = 0;
+                    GetOverlappedResult(self.handle, &ov, &mut cancelled_bytes, 1);
                     CloseHandle(ev);
                     return Err("HID 读取超时".into());
                 }
-                GetOverlappedResult(self.handle, &ov, &mut read_bytes, 0);
+                if GetOverlappedResult(self.handle, &ov, &mut read_bytes, 0) == 0 {
+                    let ov_err = GetLastError();
+                    CloseHandle(ev);
+                    return Err(format!("HID 读取结果异常: err={}", ov_err));
+                }
             }
             CloseHandle(ev);
             buf.truncate(read_bytes as usize);
             Ok(buf)
         }
+    }
+}
+
+impl HidTransport for WinHidHandle {
+    fn write_report(&self, data: &[u8]) -> Result<(), String> {
+        WinHidHandle::write_report(self, data)
+    }
+
+    fn read_report(&self, timeout_ms: u32) -> Result<Vec<u8>, String> {
+        WinHidHandle::read_report(self, timeout_ms)
     }
 }
 
@@ -328,7 +377,14 @@ impl Crush80Hid {
     }
 
     pub(crate) fn lock_hid(&self) -> MutexGuard<'_, ()> {
-        self.lock.lock().unwrap()
+        self.lock.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn ensure_not_ota_busy(&self) -> Result<(), String> {
+        if self.is_ota_busy() {
+            return Err("OTA 刷写进行中，已暂停其他设备操作".into());
+        }
+        Ok(())
     }
 
     /// Open the wired USB OTA HID interface (PID 0x5055, Usage Page 0xFFEF).
@@ -358,7 +414,10 @@ impl Crush80Hid {
         Ok((h, m))
     }
 
-    fn via_cmd(h: &WinHidHandle, payload: &[u8]) -> Result<[u8; 32], String> {
+    fn via_cmd(h: &impl HidTransport, payload: &[u8]) -> Result<[u8; 32], String> {
+        if payload.is_empty() {
+            return Err("VIA 指令载荷为空".into());
+        }
         let mut pkt = [0u8; 33];
         pkt[0] = 0x00; // Report ID 0
         let n = payload.len().min(32);
@@ -367,6 +426,12 @@ impl Crush80Hid {
         let resp = h.read_report(1500)?;
         if resp.len() < 33 {
             return Err(format!("VIA 返回包过短: {} bytes", resp.len()));
+        }
+        if resp[1] != payload[0] {
+            return Err(format!(
+                "VIA 响应命令字不匹配: 期望 0x{:02X}，实际 0x{:02X}",
+                payload[0], resp[1]
+            ));
         }
         let mut out = [0u8; 32];
         out.copy_from_slice(&resp[1..33]);
@@ -385,13 +450,12 @@ impl Crush80Hid {
             return DeviceStatus {
                 connected: true,
                 pid: PID_USB,
-                transport: "USB 有线 (OTA)".into(),
                 firmware_crc: None,
                 firmware_name: "OTA 刷写中...".into(),
                 via_protocol: 0,
             };
         }
-        let _g = self.lock.lock().unwrap();
+        let _g = self.lock_hid();
         let Some(m) = find_hid_device(USAGE_VIA) else {
             return DeviceStatus::default();
         };
@@ -399,51 +463,44 @@ impl Crush80Hid {
         let mut st = DeviceStatus {
             connected: true,
             pid: m.pid,
-            transport: if m.pid == PID_USB { "USB 有线".into() } else { "2.4G 无线".into() },
             firmware_crc: None,
-            firmware_name: "2.4G 模式 (仅 USB 可查 CRC)".into(),
+            firmware_name: if m.pid == PID_USB {
+                "USB 有线".into()
+            } else {
+                "2.4G 模式 (仅 USB 可查 CRC)".into()
+            },
             via_protocol: 0,
         };
 
         if let Ok(h) = WinHidHandle::open(&m) {
             if let Ok(r) = Self::via_cmd(&h, &[0x01]) {
-                if r[0] == 0x01 {
-                    st.via_protocol = ((r[1] as u16) << 8) | (r[2] as u16);
-                }
+                st.via_protocol = ((r[1] as u16) << 8) | (r[2] as u16);
             }
         }
 
-        if let Some(ota_m) = find_hid_device(USAGE_OTA) {
-            for _ in 0..2 {
-                if let Ok(h) = WinHidHandle::open(&ota_m) {
-                    let mut pkt = [0xFFu8; 64];
-                    pkt[0] = 5;
-                    pkt[1] = 1;
-                    pkt[2] = 0;
-                    pkt[3] = 0;
-                    if h.write_report(&pkt).is_ok() {
-                        if let Ok(resp) = h.read_report(1000) {
-                            if resp.len() >= 12 && resp[0..4] == [0x05, 0x01, 0x08, 0x00] {
-                                let crc = u32::from_le_bytes([resp[8], resp[9], resp[10], resp[11]]);
-                                st.firmware_crc = Some(crc);
-                                st.firmware_name = match crc {
-                                    0xCA2D85DC => "Official WOBLAB 0108".into(),
-                                    0xFE1AA4C2 => "Community RC2".into(),
-                                    0x2F4F4974 => "NativeHeld".into(),
-                                    0xAF713C2C => "Ember".into(),
-                                    0x99FCFDBD => "Ember".into(),
-                                    0x4859A8C5 => "Ember".into(),
-                                    0xC03D5821 => "Ember".into(),
-                                    0x6C8D7399 => "Ember".into(),
-                                    0x0AACEB06 => "Ember".into(),
-                                    _ => format!("Custom {:08X}", crc),
-                                };
-                                break;
+        // Only query USAGE_OTA (0xFFEF) on wired USB (PID 0x5055); 2.4G dongle does not reply.
+        if m.pid == PID_USB {
+            if let Some(ota_m) = find_hid_devices(USAGE_OTA).into_iter().find(|d| d.pid == PID_USB) {
+                for _ in 0..2 {
+                    if let Ok(h) = WinHidHandle::open(&ota_m) {
+                        let mut pkt = [0xFFu8; 64];
+                        pkt[0] = 5;
+                        pkt[1] = 1;
+                        pkt[2] = 0;
+                        pkt[3] = 0;
+                        if h.write_report(&pkt).is_ok() {
+                            if let Ok(resp) = h.read_report(1000) {
+                                if resp.len() >= 12 && resp[0..4] == [0x05, 0x01, 0x08, 0x00] {
+                                    let crc = u32::from_le_bytes([resp[8], resp[9], resp[10], resp[11]]);
+                                    st.firmware_crc = Some(crc);
+                                    st.firmware_name = crate::ota::known_firmware_name(crc);
+                                    break;
+                                }
                             }
                         }
                     }
+                    std::thread::sleep(std::time::Duration::from_millis(80));
                 }
-                std::thread::sleep(std::time::Duration::from_millis(80));
             }
         }
 
@@ -451,16 +508,14 @@ impl Crush80Hid {
     }
 
     pub fn read_keymap(&self) -> Result<[[u16; 128]; 4], String> {
-        let _g = self.lock.lock().unwrap();
+        self.ensure_not_ota_busy()?;
+        let _g = self.lock_hid();
         let (h, _) = self.open_via()?;
         let mut buf = Vec::with_capacity(KEYMAP_BYTES);
         let mut offset = 0usize;
         while offset < KEYMAP_BYTES {
             let size = CHUNK_SIZE.min(KEYMAP_BYTES - offset);
             let r = Self::via_cmd(&h, &[0x12, (offset >> 8) as u8, (offset & 0xFF) as u8, size as u8])?;
-            if r[0] != 0x12 {
-                return Err(format!("读取键位失败 @ {}", offset));
-            }
             buf.extend_from_slice(&r[4..4 + size]);
             offset += size;
         }
@@ -475,17 +530,16 @@ impl Crush80Hid {
     }
 
     pub fn set_key(&self, layer: u8, row: u8, col: u8, keycode: u16) -> Result<(), String> {
-        let _g = self.lock.lock().unwrap();
+        self.ensure_not_ota_busy()?;
+        let _g = self.lock_hid();
         let (h, _) = self.open_via()?;
-        let r = Self::via_cmd(&h, &[0x05, layer, row, col, (keycode >> 8) as u8, (keycode & 0xFF) as u8])?;
-        if r[0] != 0x05 {
-            return Err("写入按键失败".into());
-        }
+        Self::via_cmd(&h, &[0x05, layer, row, col, (keycode >> 8) as u8, (keycode & 0xFF) as u8])?;
         Ok(())
     }
 
     pub fn read_rgb(&self) -> Result<RgbState, String> {
-        let _g = self.lock.lock().unwrap();
+        self.ensure_not_ota_busy()?;
+        let _g = self.lock_hid();
         let (h, _) = self.open_via()?;
         let b = Self::via_cmd(&h, &[0x08, 0x03, 1])?[3];
         let e = Self::via_cmd(&h, &[0x08, 0x03, 2])?[3];
@@ -511,7 +565,8 @@ impl Crush80Hid {
         rainbow: Option<bool>,
         save: bool,
     ) -> Result<(), String> {
-        let _g = self.lock.lock().unwrap();
+        self.ensure_not_ota_busy()?;
+        let _g = self.lock_hid();
         let (h, _) = self.open_via()?;
         if let Some(v) = brightness {
             Self::via_cmd(&h, &[0x07, 0x03, 1, v.min(9)])?;
@@ -535,12 +590,13 @@ impl Crush80Hid {
     }
 
     pub fn read_hw_config(&self) -> Result<HardwareConfig, String> {
-        let _g = self.lock.lock().unwrap();
+        self.ensure_not_ota_busy()?;
+        let _g = self.lock_hid();
         let (h, _) = self.open_via()?;
         Self::read_hw_config_with(&h)
     }
 
-    fn read_hw_config_with(h: &WinHidHandle) -> Result<HardwareConfig, String> {
+    fn read_hw_config_with(h: &impl HidTransport) -> Result<HardwareConfig, String> {
         // Probe CONFIG[26] (OS mode, 0 or 1 on ProSuite) with sentinel 0xAA.
         // Stock RGB & Non-RGB firmwares ignore id>=5 and echo back 0xAA untouched!
         let os_probe = Self::via_cmd(h, &[0x08, 0x03, 26, 0xAA])?[3];
@@ -584,10 +640,8 @@ impl Crush80Hid {
 
     /// Single-session fast poll of both RGB and HardwareConfig (for real-time bidirectional sync).
     pub fn poll_live_state(&self) -> Result<(RgbState, HardwareConfig, u16), String> {
-        if self.is_ota_busy() {
-            return Err("OTA in progress".into());
-        }
-        let _g = self.lock.lock().unwrap();
+        self.ensure_not_ota_busy()?;
+        let _g = self.lock_hid();
         let (h, m) = self.open_via()?;
         let b = Self::via_cmd(&h, &[0x08, 0x03, 1])?[3];
         let e = Self::via_cmd(&h, &[0x08, 0x03, 2])?[3];
@@ -607,7 +661,8 @@ impl Crush80Hid {
     }
 
     pub fn set_config_byte(&self, id: u8, val: u8, save: bool) -> Result<(), String> {
-        let _g = self.lock.lock().unwrap();
+        self.ensure_not_ota_busy()?;
+        let _g = self.lock_hid();
         let (h, _) = self.open_via()?;
         Self::via_cmd(&h, &[0x07, 0x03, id, val])?;
         if save {
@@ -619,26 +674,24 @@ impl Crush80Hid {
     /// Triggers native OEM Logo LED flash feedback on Ember firmware (`id=0xFD`):
     /// writes `[B, G, R, count, 0]` to `gp+759..763` (zero flash wear, safely ignored by stock firmware).
     pub fn trigger_led_feedback(&self, count: u8, r: u8, g: u8, b: u8) {
-        if count == 0 {
+        if count == 0 || self.is_ota_busy() {
             return;
         }
-        let _g = self.lock.lock().unwrap();
+        let _g = self.lock_hid();
         if let Ok((h, _)) = self.open_via() {
             let _ = Self::via_cmd(&h, &[0x07, 0x03, 0xFD, b, g, r, count.min(6), 0]);
         }
     }
 
     pub fn read_macros(&self) -> Result<(Vec<String>, Vec<u8>), String> {
-        let _g = self.lock.lock().unwrap();
+        self.ensure_not_ota_busy()?;
+        let _g = self.lock_hid();
         let (h, _) = self.open_via()?;
         let mut buf = Vec::with_capacity(MACRO_BYTES);
         let mut offset = 0usize;
         while offset < MACRO_BYTES {
             let size = CHUNK_SIZE.min(MACRO_BYTES - offset);
             let r = Self::via_cmd(&h, &[0x0E, (offset >> 8) as u8, (offset & 0xFF) as u8, size as u8])?;
-            if r[0] != 0x0E {
-                return Err(format!("读取宏失败 @ {}", offset));
-            }
             buf.extend_from_slice(&r[4..4 + size]);
             offset += size;
         }
@@ -653,46 +706,31 @@ impl Crush80Hid {
         Ok((slots, buf))
     }
 
-    pub fn write_macros(&self, slots: &[String]) -> Result<(), String> {
-        let mut buf = Vec::with_capacity(MACRO_BYTES);
-        for s in slots.iter().take(16) {
-            for b in s.bytes() {
-                if (1..=126).contains(&b) {
-                    buf.push(b);
-                }
-            }
-            buf.push(0);
-        }
-        if buf.len() > MACRO_BYTES {
-            return Err(format!("宏总长度超过 512 字节 ({})", buf.len()));
-        }
-        buf.resize(MACRO_BYTES, 0);
-
-        self.write_macro_buffer(&buf)
-    }
-
     /// Write a raw 512-byte VIA macro buffer directly to the keyboard.
     pub fn write_macro_buffer(&self, raw: &[u8]) -> Result<(), String> {
+        self.ensure_not_ota_busy()?;
         if raw.len() != MACRO_BYTES {
             return Err(format!("宏缓冲区长度无效: 期望 {} 字节，实际 {}", MACRO_BYTES, raw.len()));
         }
-        let _g = self.lock.lock().unwrap();
+        let _g = self.lock_hid();
         let (h, _) = self.open_via()?;
         let mut offset = 0usize;
         while offset < MACRO_BYTES {
             let size = CHUNK_SIZE.min(MACRO_BYTES - offset);
             let mut req = vec![0x0F, (offset >> 8) as u8, (offset & 0xFF) as u8, size as u8];
             req.extend_from_slice(&raw[offset..offset + size]);
-            let r = Self::via_cmd(&h, &req)?;
-            if r[0] != 0x0F {
-                return Err(format!("写入宏失败 @ {}", offset));
-            }
+            Self::via_cmd(&h, &req)?;
             offset += size;
         }
         Ok(())
     }
 
-    pub fn export_snapshot(&self, timestamp: String) -> Result<FullSnapshot, String> {
+    pub fn export_snapshot_for(
+        &self,
+        timestamp: String,
+        edition: BoardEdition,
+    ) -> Result<FullSnapshot, String> {
+        self.ensure_not_ota_busy()?;
         let layers = self.read_keymap()?;
         let mut km = Vec::with_capacity(KEYMAP_BYTES);
         for l in &layers {
@@ -711,23 +749,55 @@ impl Crush80Hid {
             macros_hex: to_hex(&macros),
             rgb,
             hw: Some(hw),
+            edition: Some(edition),
         })
     }
 
+    pub fn export_snapshot(&self, timestamp: String) -> Result<FullSnapshot, String> {
+        self.export_snapshot_for(timestamp, BoardEdition::ProRgb)
+    }
+
     pub fn apply_snapshot(&self, snap: &FullSnapshot) -> Result<(), String> {
+        self.apply_snapshot_checked(snap, None, true)
+    }
+
+    pub fn apply_snapshot_checked(
+        &self,
+        snap: &FullSnapshot,
+        current_edition: Option<BoardEdition>,
+        save_to_flash: bool,
+    ) -> Result<(), String> {
+        self.ensure_not_ota_busy()?;
+        let _g = self.lock_hid();
+        let (h, _) = self.open_via()?;
+        Self::apply_snapshot_with(&h, snap, current_edition, save_to_flash)
+    }
+
+    pub(crate) fn apply_snapshot_with(
+        h: &impl HidTransport,
+        snap: &FullSnapshot,
+        current_edition: Option<BoardEdition>,
+        save_to_flash: bool,
+    ) -> Result<(), String> {
+        if let (Some(snap_ed), Some(cur_ed)) = (snap.edition, current_edition) {
+            if snap_ed != cur_ed {
+                return Err(format!(
+                    "方案版型不匹配: 方案为 {:?}，当前键盘为 {:?}，已阻止写入以防键位错乱",
+                    snap_ed, cur_ed
+                ));
+            }
+        }
         let km = from_hex(&snap.keymap_hex)?;
         let mc = from_hex(&snap.macros_hex)?;
         if km.len() != KEYMAP_BYTES || mc.len() != MACRO_BYTES {
             return Err("方案文件长度无效".into());
         }
-        let _g = self.lock.lock().unwrap();
-        let (h, _) = self.open_via()?;
         let mut offset = 0usize;
         while offset < KEYMAP_BYTES {
             let size = CHUNK_SIZE.min(KEYMAP_BYTES - offset);
             let mut req = vec![0x13, (offset >> 8) as u8, (offset & 0xFF) as u8, size as u8];
             req.extend_from_slice(&km[offset..offset + size]);
-            Self::via_cmd(&h, &req)?;
+            Self::via_cmd(h, &req)?;
             offset += size;
         }
         offset = 0;
@@ -735,48 +805,52 @@ impl Crush80Hid {
             let size = CHUNK_SIZE.min(MACRO_BYTES - offset);
             let mut req = vec![0x0F, (offset >> 8) as u8, (offset & 0xFF) as u8, size as u8];
             req.extend_from_slice(&mc[offset..offset + size]);
-            Self::via_cmd(&h, &req)?;
+            Self::via_cmd(h, &req)?;
             offset += size;
         }
-        Self::via_cmd(&h, &[0x07, 0x03, 1, snap.rgb.brightness.min(9)])?;
-        Self::via_cmd(&h, &[0x07, 0x03, 2, snap.rgb.effect.min(18)])?;
-        Self::via_cmd(&h, &[0x07, 0x03, 3, snap.rgb.speed.min(4)])?;
+        Self::via_cmd(h, &[0x07, 0x03, 1, snap.rgb.brightness.min(9)])?;
+        Self::via_cmd(h, &[0x07, 0x03, 2, snap.rgb.effect.min(18)])?;
+        Self::via_cmd(h, &[0x07, 0x03, 3, snap.rgb.speed.min(4)])?;
         if snap.rgb.rainbow {
-            Self::via_cmd(&h, &[0x07, 0x03, 5, 0xFF])?;
+            Self::via_cmd(h, &[0x07, 0x03, 5, 0xFF])?;
         } else {
-            Self::via_cmd(&h, &[0x07, 0x03, 4, snap.rgb.hue, snap.rgb.saturation])?;
+            Self::via_cmd(h, &[0x07, 0x03, 4, snap.rgb.hue, snap.rgb.saturation])?;
         }
         if let Some(hw) = &snap.hw {
-            Self::via_cmd(&h, &[0x07, 0x03, 21, if hw.win_lock { 0xFF } else { 0x00 }])?;
-            Self::via_cmd(&h, &[0x07, 0x03, 26, if hw.mac_mode { 0x01 } else { 0x00 }])?;
-            Self::via_cmd(&h, &[0x07, 0x03, 29, if hw.low_latency { 0xFF } else { 0x00 }])?;
-            Self::via_cmd(&h, &[0x07, 0x03, 32, hw.logo_mode])?;
-            if hw.logo_color == 0xFF {
-                Self::via_cmd(&h, &[0x07, 0x03, 33, 0xFF])?;
-            } else {
-                Self::via_cmd(&h, &[0x07, 0x03, 33, 0x00])?;
-                Self::via_cmd(&h, &[0x07, 0x03, 34, hw.logo_color.min(44)])?;
+            if hw.prosuite_supported {
+                Self::via_cmd(h, &[0x07, 0x03, 21, if hw.win_lock { 0xFF } else { 0x00 }])?;
+                Self::via_cmd(h, &[0x07, 0x03, 26, if hw.mac_mode { 0x01 } else { 0x00 }])?;
+                Self::via_cmd(h, &[0x07, 0x03, 29, if hw.low_latency { 0xFF } else { 0x00 }])?;
+                Self::via_cmd(h, &[0x07, 0x03, 32, hw.logo_mode.min(3)])?;
+                if hw.logo_color == 0xFF {
+                    Self::via_cmd(h, &[0x07, 0x03, 33, 0xFF])?;
+                } else {
+                    Self::via_cmd(h, &[0x07, 0x03, 33, 0x00])?;
+                    Self::via_cmd(h, &[0x07, 0x03, 34, hw.logo_color.min(44)])?;
+                }
+                Self::via_cmd(h, &[0x07, 0x03, 35, if hw.logo_on { 0x00 } else { 0x01 }])?;
+                Self::via_cmd(h, &[0x07, 0x03, 36, hw.side_mode.min(3)])?;
+                if hw.side_color == 0xFF {
+                    Self::via_cmd(h, &[0x07, 0x03, 37, 0xFF])?;
+                } else {
+                    Self::via_cmd(h, &[0x07, 0x03, 37, 0x00])?;
+                    Self::via_cmd(h, &[0x07, 0x03, 38, hw.side_color.min(44)])?;
+                }
+                Self::via_cmd(h, &[0x07, 0x03, 39, if hw.side_on { 0x00 } else { 0x01 }])?;
+                Self::via_cmd(h, &[0x07, 0x03, 40, if hw.sys_rgb_on { 0x00 } else { 0x01 }])?;
+                let tt_units = if hw.tapping_term_ms == 0 {
+                    0
+                } else {
+                    (hw.tapping_term_ms / 10).clamp(1, 255) as u8
+                };
+                Self::via_cmd(h, &[0x07, 0x03, 60, tt_units])?;
             }
-            Self::via_cmd(&h, &[0x07, 0x03, 35, if hw.logo_on { 0x00 } else { 0x01 }])?;
-            Self::via_cmd(&h, &[0x07, 0x03, 36, hw.side_mode])?;
-            if hw.side_color == 0xFF {
-                Self::via_cmd(&h, &[0x07, 0x03, 37, 0xFF])?;
-            } else {
-                Self::via_cmd(&h, &[0x07, 0x03, 37, 0x00])?;
-                Self::via_cmd(&h, &[0x07, 0x03, 38, hw.side_color.min(44)])?;
-            }
-            Self::via_cmd(&h, &[0x07, 0x03, 39, if hw.side_on { 0x00 } else { 0x01 }])?;
-            Self::via_cmd(&h, &[0x07, 0x03, 40, if hw.sys_rgb_on { 0x00 } else { 0x01 }])?;
-            let tt_units = if hw.tapping_term_ms == 0 {
-                0
-            } else {
-                (hw.tapping_term_ms / 10).clamp(1, 255) as u8
-            };
-            Self::via_cmd(&h, &[0x07, 0x03, 60, tt_units])?;
         }
-        Self::via_cmd(&h, &[0x09])?;
+        if save_to_flash {
+            Self::via_cmd(h, &[0x09])?;
+        }
         // Mint x2 physical Logo LED pulse to acknowledge Profile / AutoSwitch load
-        let _ = Self::via_cmd(&h, &[0x07, 0x03, 0xFD, 153, 211, 52, 2, 0]);
+        let _ = Self::via_cmd(h, &[0x07, 0x03, 0xFD, 153, 211, 52, 2, 0]);
         Ok(())
     }
 }
@@ -799,4 +873,147 @@ fn from_hex(s: &str) -> Result<Vec<u8>, String> {
         out.push(b);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keycodes::BoardEdition;
+    use std::cell::RefCell;
+
+    struct MockTransport {
+        writes: RefCell<Vec<Vec<u8>>>,
+        responses: RefCell<std::collections::VecDeque<Vec<u8>>>,
+        echo_mode: bool,
+    }
+
+    impl MockTransport {
+        fn with_responses(resps: Vec<Vec<u8>>) -> Self {
+            Self {
+                writes: RefCell::new(Vec::new()),
+                responses: RefCell::new(resps.into()),
+                echo_mode: false,
+            }
+        }
+
+        fn echo() -> Self {
+            Self {
+                writes: RefCell::new(Vec::new()),
+                responses: RefCell::new(std::collections::VecDeque::new()),
+                echo_mode: true,
+            }
+        }
+    }
+
+    impl HidTransport for MockTransport {
+        fn write_report(&self, data: &[u8]) -> Result<(), String> {
+            self.writes.borrow_mut().push(data.to_vec());
+            if self.echo_mode {
+                self.responses.borrow_mut().push_back(data.to_vec());
+            }
+            Ok(())
+        }
+
+        fn read_report(&self, _timeout_ms: u32) -> Result<Vec<u8>, String> {
+            self.responses
+                .borrow_mut()
+                .pop_front()
+                .ok_or_else(|| "mock queue empty".into())
+        }
+    }
+
+    #[test]
+    fn test_via_cmd_rejects_mismatched_opcode() {
+        let mut wrong = vec![0u8; 33];
+        wrong[1] = 0x08; // sent 0x05, got 0x08 back
+        let mock = MockTransport::with_responses(vec![wrong]);
+        let err = Crush80Hid::via_cmd(&mock, &[0x05, 0, 0, 0, 0, 4]).unwrap_err();
+        assert!(err.contains("0x05") && err.contains("0x08"), "unexpected err: {err}");
+    }
+
+    #[test]
+    fn test_apply_snapshot_rejects_cross_edition() {
+        let snap = FullSnapshot {
+            timestamp: "2026-11-25".into(),
+            keymap_hex: "00".repeat(KEYMAP_BYTES),
+            macros_hex: "00".repeat(MACRO_BYTES),
+            rgb: RgbState::default(),
+            hw: None,
+            edition: Some(BoardEdition::ProRgb),
+        };
+        let mock = MockTransport::echo();
+        let err = Crush80Hid::apply_snapshot_with(&mock, &snap, Some(BoardEdition::LiteNoRgb), true)
+            .unwrap_err();
+        assert!(err.contains("版型") || err.contains("edition"), "unexpected err: {err}");
+        assert!(mock.writes.borrow().is_empty());
+    }
+
+    #[test]
+    fn test_apply_snapshot_ram_only_skips_save_0x09() {
+        let mut hw = HardwareConfig::default();
+        hw.prosuite_supported = true;
+        hw.logo_mode = 99; // out-of-range, must clamp to 3
+        hw.side_mode = 42; // out-of-range, must clamp to 3
+        let snap = FullSnapshot {
+            timestamp: "2026-11-25".into(),
+            keymap_hex: "00".repeat(KEYMAP_BYTES),
+            macros_hex: "00".repeat(MACRO_BYTES),
+            rgb: RgbState::default(),
+            hw: Some(hw),
+            edition: Some(BoardEdition::ProRgb),
+        };
+        let mock = MockTransport::echo();
+        Crush80Hid::apply_snapshot_with(&mock, &snap, Some(BoardEdition::ProRgb), false).unwrap();
+        let writes = mock.writes.borrow();
+        // Zero 0x09 (save-to-flash) packets when save_to_flash == false
+        assert!(!writes.iter().any(|p| p.get(1) == Some(&0x09)));
+        // Check clamped logo_mode (CONFIG[32]) & side_mode (CONFIG[36])
+        let logo_pkt = writes.iter().find(|p| p[1..4] == [0x07, 0x03, 32]).unwrap();
+        let side_pkt = writes.iter().find(|p| p[1..4] == [0x07, 0x03, 36]).unwrap();
+        assert_eq!(logo_pkt[4], 3);
+        assert_eq!(side_pkt[4], 3);
+    }
+
+    #[test]
+    fn test_snapshot_backward_compat_without_edition() {
+        let json = r#"{
+            "timestamp": "2026-01-01",
+            "keymap_hex": "0000",
+            "macros_hex": "0000",
+            "rgb": {"brightness": 5, "effect": 2, "speed": 2, "hue": 0, "saturation": 255}
+        }"#;
+        let snap: FullSnapshot = serde_json::from_str(json).unwrap();
+        assert_eq!(snap.edition, None);
+        assert!(snap.hw.is_none());
+        assert!(!snap.rgb.rainbow);
+    }
+
+    #[test]
+    fn test_hex_roundtrip_and_invalid_hex() {
+        let src = vec![0x00, 0x0A, 0xFF, 0x7F];
+        assert_eq!(from_hex(&to_hex(&src)).unwrap(), src);
+        assert!(from_hex("abc").is_err());
+        assert!(from_hex("zz").is_err());
+    }
+
+    #[test]
+    fn test_ota_busy_blocks_all_via_ops() {
+        let hid = Crush80Hid::new();
+        assert!(hid.try_begin_ota());
+        assert!(hid.read_keymap().unwrap_err().contains("OTA"));
+        assert!(hid.set_key(0, 0, 0, 4).unwrap_err().contains("OTA"));
+        assert!(hid.set_rgb_partial(Some(5), None, None, None, None, false).unwrap_err().contains("OTA"));
+        assert!(hid.set_config_byte(29, 0xFF, false).unwrap_err().contains("OTA"));
+        assert!(hid.write_macro_buffer(&[0u8; MACRO_BYTES]).unwrap_err().contains("OTA"));
+        let snap = FullSnapshot {
+            timestamp: "t".into(),
+            keymap_hex: "00".repeat(KEYMAP_BYTES),
+            macros_hex: "00".repeat(MACRO_BYTES),
+            rgb: RgbState::default(),
+            hw: None,
+            edition: None,
+        };
+        assert!(hid.apply_snapshot_checked(&snap, None, false).unwrap_err().contains("OTA"));
+        hid.end_ota();
+    }
 }
