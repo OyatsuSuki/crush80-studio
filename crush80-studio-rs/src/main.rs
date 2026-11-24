@@ -2754,7 +2754,17 @@ impl Crush80App {
                             p.stage = s.ota_flashing.to_string();
                         }
                         self.ota_was_running = true;
-                        flash_firmware_async(self.hid.clone(), bytes, self.ota_progress.clone());
+                        let policy = ota::OtaFlashPolicy {
+                            detected_edition: detect_edition_from_keymap(&self.layers),
+                            allow_unknown_source_crc: false,
+                            allow_unknown_image: false,
+                        };
+                        flash_firmware_async(
+                            self.hid.clone(),
+                            bytes,
+                            policy,
+                            self.ota_progress.clone(),
+                        );
                     }
                 }
 
