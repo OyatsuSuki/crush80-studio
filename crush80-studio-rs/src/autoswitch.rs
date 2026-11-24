@@ -1,4 +1,5 @@
 use crate::hid_win::{Crush80Hid, FullSnapshot, RgbState};
+use crate::storage::resolve_profile_path;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -32,6 +33,44 @@ pub struct AutoSwitchShared {
     pub cfg: AutoSwitchConfig,
     pub active_rule_id: Option<String>,
     pub last_exe: String,
+}
+
+#[derive(Clone, Debug)]
+pub enum SwitchTransition {
+    ApplyRule(SwitchRule),
+    Revert(Option<RgbState>),
+    Noop,
+}
+
+/// Pure rule-matching state machine for AutoSwitch (tested independently of Win32/HID).
+pub fn select_transition(
+    cfg: &AutoSwitchConfig,
+    active_rule_id: Option<&str>,
+    exe: &str,
+) -> SwitchTransition {
+    if !cfg.enabled || exe.is_empty() {
+        return SwitchTransition::Noop;
+    }
+    let exe_lower = exe.to_ascii_lowercase();
+    let matched = cfg
+        .rules
+        .iter()
+        .find(|r| {
+            r.enabled
+                && r.exe
+                    .split(',')
+                    .map(|s| s.trim().to_ascii_lowercase())
+                    .any(|t| !t.is_empty() && t == exe_lower)
+        })
+        .cloned();
+
+    match matched {
+        Some(rule) if active_rule_id != Some(rule.id.as_str()) => {
+            SwitchTransition::ApplyRule(rule)
+        }
+        None if active_rule_id.is_some() => SwitchTransition::Revert(cfg.default_rgb.clone()),
+        _ => SwitchTransition::Noop,
+    }
 }
 
 pub fn get_foreground_exe() -> String {
@@ -79,7 +118,14 @@ pub fn load_config(path: &Path) -> AutoSwitchConfig {
                 name: "VS Code 编程冷白".into(),
                 exe: "code.exe, cursor.exe".into(),
                 action: "rgb".into(),
-                rgb: RgbState { brightness: 4, effect: 6, speed: 2, hue: 140, saturation: 40, rainbow: false },
+                rgb: RgbState {
+                    brightness: 4,
+                    effect: 6,
+                    speed: 2,
+                    hue: 140,
+                    saturation: 40,
+                    rainbow: false,
+                },
                 profile: String::new(),
                 enabled: true,
             },
@@ -88,7 +134,14 @@ pub fn load_config(path: &Path) -> AutoSwitchConfig {
                 name: "FPS 竞技幻彩".into(),
                 exe: "cs2.exe, valorant-win64-shipping.exe".into(),
                 action: "rgb".into(),
-                rgb: RgbState { brightness: 8, effect: 9, speed: 4, hue: 0, saturation: 255, rainbow: true },
+                rgb: RgbState {
+                    brightness: 8,
+                    effect: 9,
+                    speed: 4,
+                    hue: 0,
+                    saturation: 255,
+                    rainbow: true,
+                },
                 profile: String::new(),
                 enabled: true,
             },
@@ -96,81 +149,144 @@ pub fn load_config(path: &Path) -> AutoSwitchConfig {
     }
 }
 
-pub fn save_config(path: &Path, cfg: &AutoSwitchConfig) {
+pub fn save_config(path: &Path, cfg: &AutoSwitchConfig) -> Result<(), String> {
     if let Some(p) = path.parent() {
-        let _ = std::fs::create_dir_all(p);
+        std::fs::create_dir_all(p).map_err(|e| format!("创建配置目录失败: {}", e))?;
     }
-    if let Ok(json) = serde_json::to_string_pretty(cfg) {
-        let _ = std::fs::write(path, json);
-    }
+    let json = serde_json::to_string_pretty(cfg).map_err(|e| format!("序列化联动规则失败: {}", e))?;
+    std::fs::write(path, json).map_err(|e| format!("写入联动配置失败: {}", e))
 }
 
-pub fn spawn_watcher(hid: Arc<Crush80Hid>, shared: Arc<Mutex<AutoSwitchShared>>, profiles_dir: PathBuf) {
+pub fn spawn_watcher(
+    hid: Arc<Crush80Hid>,
+    shared: Arc<Mutex<AutoSwitchShared>>,
+    profiles_dir: PathBuf,
+) {
     thread::spawn(move || loop {
         thread::sleep(Duration::from_millis(800));
+        if hid.is_ota_busy() {
+            continue;
+        }
         let exe = get_foreground_exe();
-        let (apply_rule, revert_rgb) = {
-            let mut st = shared.lock().unwrap();
+        let transition = {
+            let Ok(mut st) = shared.lock() else {
+                continue;
+            };
             st.last_exe = exe.clone();
-            if !st.cfg.enabled || exe.is_empty() {
-                (None, None)
-            } else {
-                let matched = st
-                    .cfg
-                    .rules
-                    .iter()
-                    .find(|r| {
-                        r.enabled
-                            && r.exe
-                                .split(',')
-                                .map(|s| s.trim().to_lowercase())
-                                .any(|t| !t.is_empty() && t == exe)
-                    })
-                    .cloned();
-
-                match matched {
-                    Some(rule) if st.active_rule_id.as_deref() != Some(rule.id.as_str()) => {
-                        st.active_rule_id = Some(rule.id.clone());
-                        (Some(rule), None)
-                    }
-                    None if st.active_rule_id.is_some() => {
-                        st.active_rule_id = None;
-                        (None, st.cfg.default_rgb.clone())
-                    }
-                    _ => (None, None),
-                }
-            }
+            select_transition(&st.cfg, st.active_rule_id.as_deref(), &exe)
         };
 
-        if let Some(rule) = apply_rule {
-            if rule.action == "rgb" {
-                let c = if rule.rgb.rainbow { None } else { Some((rule.rgb.hue, rule.rgb.saturation)) };
-                let _ = hid.set_rgb_partial(
-                    Some(rule.rgb.brightness),
-                    Some(rule.rgb.effect),
-                    Some(rule.rgb.speed),
-                    c,
-                    Some(rule.rgb.rainbow),
-                    false, // RAM-only, zero Flash wear!
-                );
-            } else if rule.action == "profile" && !rule.profile.is_empty() {
-                let p = profiles_dir.join(format!("{}.json", rule.profile));
-                if let Ok(txt) = std::fs::read_to_string(p) {
-                    if let Ok(snap) = serde_json::from_str::<FullSnapshot>(&txt) {
-                        let _ = hid.apply_snapshot(&snap);
+        match transition {
+            SwitchTransition::ApplyRule(rule) => {
+                let res = if rule.action == "rgb" {
+                    let c = if rule.rgb.rainbow {
+                        None
+                    } else {
+                        Some((rule.rgb.hue, rule.rgb.saturation))
+                    };
+                    hid.set_rgb_partial(
+                        Some(rule.rgb.brightness),
+                        Some(rule.rgb.effect),
+                        Some(rule.rgb.speed),
+                        c,
+                        Some(rule.rgb.rainbow),
+                        false, // RAM-only, zero Flash wear!
+                    )
+                } else if rule.action == "profile" && !rule.profile.is_empty() {
+                    resolve_profile_path(&profiles_dir, &rule.profile)
+                        .and_then(|p| {
+                            std::fs::read_to_string(p).map_err(|e| format!("读取方案失败: {}", e))
+                        })
+                        .and_then(|txt| {
+                            serde_json::from_str::<FullSnapshot>(&txt)
+                                .map_err(|e| format!("解析方案失败: {}", e))
+                        })
+                        .and_then(|snap| hid.apply_snapshot_checked(&snap, None, false))
+                } else {
+                    Ok(())
+                };
+
+                // Only commit `active_rule_id` on success so disconnected/sleeping boards retry.
+                if res.is_ok() {
+                    if let Ok(mut st) = shared.lock() {
+                        st.active_rule_id = Some(rule.id);
                     }
                 }
             }
-        } else if let Some(rgb) = revert_rgb {
-            let c = if rgb.rainbow { None } else { Some((rgb.hue, rgb.saturation)) };
-            let _ = hid.set_rgb_partial(
-                Some(rgb.brightness),
-                Some(rgb.effect),
-                Some(rgb.speed),
-                c,
-                Some(rgb.rainbow),
-                false,
-            );
+            SwitchTransition::Revert(maybe_rgb) => {
+                let res = if let Some(rgb) = maybe_rgb {
+                    let c = if rgb.rainbow {
+                        None
+                    } else {
+                        Some((rgb.hue, rgb.saturation))
+                    };
+                    hid.set_rgb_partial(
+                        Some(rgb.brightness),
+                        Some(rgb.effect),
+                        Some(rgb.speed),
+                        c,
+                        Some(rgb.rainbow),
+                        false,
+                    )
+                } else {
+                    Ok(())
+                };
+                if res.is_ok() {
+                    if let Ok(mut st) = shared.lock() {
+                        st.active_rule_id = None;
+                    }
+                }
+            }
+            SwitchTransition::Noop => {}
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_select_transition_matches_case_insensitive_csv_and_reverts() {
+        let cfg = AutoSwitchConfig {
+            enabled: true,
+            default_rgb: Some(RgbState {
+                brightness: 5,
+                effect: 6,
+                speed: 2,
+                hue: 10,
+                saturation: 255,
+                rainbow: false,
+            }),
+            rules: vec![SwitchRule {
+                id: "r1".into(),
+                name: "Code".into(),
+                exe: "Code.EXE, cursor.exe".into(),
+                action: "rgb".into(),
+                rgb: RgbState {
+                    brightness: 8,
+                    effect: 1,
+                    speed: 3,
+                    hue: 0,
+                    saturation: 255,
+                    rainbow: true,
+                },
+                profile: String::new(),
+                enabled: true,
+            }],
+        };
+
+        match select_transition(&cfg, None, "cursor.exe") {
+            SwitchTransition::ApplyRule(r) => assert_eq!(r.id, "r1"),
+            other => panic!("expected ApplyRule, got {:?}", other),
+        }
+        assert!(matches!(
+            select_transition(&cfg, Some("r1"), "code.exe"),
+            SwitchTransition::Noop
+        ));
+        assert!(matches!(
+            select_transition(&cfg, Some("r1"), "notepad.exe"),
+            SwitchTransition::Revert(Some(_))
+        ));
+    }
 }

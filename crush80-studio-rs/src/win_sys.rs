@@ -11,21 +11,85 @@ use std::path::PathBuf;
 use std::ptr::{null, null_mut};
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, HANDLE, HINSTANCE, HWND,
-    LPARAM,
+    CloseHandle, GetLastError, BOOL, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, HANDLE, HINSTANCE,
+    HWND, LPARAM,
 };
-use windows_sys::Win32::System::Threading::CreateMutexW;
+use windows_sys::Win32::System::Threading::{CreateMutexW, GetCurrentProcessId};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
+    EnumWindows, FindWindowW, GetWindowTextW, GetWindowThreadProcessId, SetForegroundWindow,
+    ShowWindow, SW_RESTORE, SW_SHOW,
 };
 
 const APP_WINDOW_TITLE: &str = "Crush 80 Studio";
-const SINGLE_INSTANCE_MUTEX_NAME: &str = "Global\\Crush80Studio_SingleInstance_v1";
+const SINGLE_INSTANCE_MUTEX_NAME: &str = "Local\\Crush80Studio_SingleInstance_v1";
 const RUN_REG_SUBKEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const RUN_REG_VALUE_NAME: &str = "Crush80Studio";
 
 fn to_wide_null(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// Copies `text` into `dst` as NUL-terminated UTF-16 without ever splitting a UTF-16 surrogate pair.
+pub fn copy_utf16_truncated(dst: &mut [u16], text: &str) {
+    dst.fill(0);
+    if dst.len() <= 1 {
+        return;
+    }
+    let max_units = dst.len() - 1;
+    let mut pos = 0usize;
+    let mut tmp = [0u16; 2];
+    for ch in text.chars() {
+        let encoded = ch.encode_utf16(&mut tmp);
+        if pos + encoded.len() > max_units {
+            break;
+        }
+        dst[pos..pos + encoded.len()].copy_from_slice(encoded);
+        pos += encoded.len();
+    }
+    dst[pos] = 0;
+}
+
+struct EnumOwnCtx<'a> {
+    pid: u32,
+    exclude: HWND,
+    title_prefix: &'a str,
+    found: HWND,
+}
+
+unsafe extern "system" fn enum_own_win_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let ctx = &mut *(lparam as *mut EnumOwnCtx<'_>);
+    if hwnd == ctx.exclude {
+        return 1;
+    }
+    let mut pid: u32 = 0;
+    GetWindowThreadProcessId(hwnd, &mut pid);
+    if pid != ctx.pid {
+        return 1;
+    }
+    let mut title_buf = [0u16; 256];
+    let len = GetWindowTextW(hwnd, title_buf.as_mut_ptr(), title_buf.len() as i32);
+    if len > 0 {
+        let title = String::from_utf16_lossy(&title_buf[..len as usize]);
+        if title.starts_with(ctx.title_prefix) {
+            ctx.found = hwnd;
+            return 0; // stop enumerating
+        }
+    }
+    1
+}
+
+/// Finds a top-level window belonging specifically to the current process whose title starts with `title_prefix`.
+pub fn find_own_main_window(title_prefix: &str, exclude_hwnd: HWND) -> HWND {
+    unsafe {
+        let mut ctx = EnumOwnCtx {
+            pid: GetCurrentProcessId(),
+            exclude: exclude_hwnd,
+            title_prefix,
+            found: null_mut(),
+        };
+        EnumWindows(Some(enum_own_win_proc), &mut ctx as *mut _ as LPARAM);
+        ctx.found
+    }
 }
 
 /// Restores and focuses an existing "Crush 80 Studio" window if present.
@@ -39,6 +103,39 @@ fn restore_existing_window() {
             SetForegroundWindow(hwnd);
         }
     }
+}
+
+#[link(name = "user32")]
+extern "system" {
+    fn GetAsyncKeyState(vkey: i32) -> i16;
+}
+
+/// Polls hardware-distinguished modifier & special keys directly from Win32:
+/// `[LCtrl, RCtrl, LShift, RShift, LAlt, RAlt, LWin, RWin, CapsLock, PrtSc, ScrLk, Pause, Menu, F13]`.
+pub fn poll_win32_special_keys() -> [bool; 14] {
+    const VKS: [i32; 14] = [
+        0xA2, // VK_LCONTROL
+        0xA3, // VK_RCONTROL
+        0xA0, // VK_LSHIFT
+        0xA1, // VK_RSHIFT
+        0xA4, // VK_LMENU (LAlt)
+        0xA5, // VK_RMENU (RAlt)
+        0x5B, // VK_LWIN
+        0x5C, // VK_RWIN
+        0x14, // VK_CAPITAL (CapsLock)
+        0x2C, // VK_SNAPSHOT (PrtSc)
+        0x91, // VK_SCROLL (ScrLk)
+        0x13, // VK_PAUSE
+        0x5D, // VK_APPS (Menu)
+        0x7C, // VK_F13
+    ];
+    let mut out = [false; 14];
+    unsafe {
+        for (i, &vk) in VKS.iter().enumerate() {
+            out[i] = (GetAsyncKeyState(vk) as u16 & 0x8000) != 0;
+        }
+    }
+    out
 }
 
 // ============================================================================
@@ -141,8 +238,12 @@ extern "system" {
     fn RegCloseKey(hkey: HKEY) -> i32;
 }
 
-/// Returns `true` if `Crush80Studio` is registered in `HKCU\...\Run`.
+/// Returns `true` if `Crush80Studio` is registered in `HKCU\...\Run` and points to the current executable.
 pub fn is_autostart_enabled() -> bool {
+    let Ok(cur_exe) = std::env::current_exe() else {
+        return false;
+    };
+    let cur_norm = cur_exe.to_string_lossy().trim().to_ascii_lowercase();
     unsafe {
         let subkey = to_wide_null(RUN_REG_SUBKEY);
         let mut hkey: HKEY = null_mut();
@@ -162,9 +263,28 @@ pub fn is_autostart_enabled() -> bool {
             null_mut(),
             &mut cb_data,
         );
+        if status != ERROR_SUCCESS || val_type != REG_SZ || cb_data < 4 || cb_data > 65536 {
+            RegCloseKey(hkey);
+            return false;
+        }
+        let mut buf = vec![0u16; (cb_data as usize + 1) / 2];
+        let mut cb2 = cb_data;
+        let status2 = RegQueryValueExW(
+            hkey,
+            val_name.as_ptr(),
+            null_mut(),
+            &mut val_type,
+            buf.as_mut_ptr() as *mut u8,
+            &mut cb2,
+        );
         RegCloseKey(hkey);
-
-        status == ERROR_SUCCESS && val_type == REG_SZ && cb_data > 2
+        if status2 != ERROR_SUCCESS {
+            return false;
+        }
+        let nul = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        let reg_val = String::from_utf16_lossy(&buf[..nul]).trim().to_ascii_lowercase();
+        let expected_quoted = format!("\"{}\"", cur_norm);
+        reg_val.starts_with(&expected_quoted) || reg_val.starts_with(&cur_norm)
     }
 }
 
@@ -292,10 +412,7 @@ fn build_filter_wide(filter_label: &str, filter_ext: &str) -> Vec<u16> {
 }
 
 fn find_owner_hwnd() -> HWND {
-    unsafe {
-        let title = to_wide_null(APP_WINDOW_TITLE);
-        FindWindowW(null(), title.as_ptr())
-    }
+    find_own_main_window(APP_WINDOW_TITLE, null_mut())
 }
 
 fn wide_buf_to_pathbuf(buf: &[u16]) -> Option<PathBuf> {
@@ -356,9 +473,7 @@ pub fn save_file_dialog(
     };
 
     let mut file_buf = vec![0u16; 4096];
-    for (i, ch) in default_name.encode_utf16().take(file_buf.len() - 1).enumerate() {
-        file_buf[i] = ch;
-    }
+    copy_utf16_truncated(&mut file_buf, default_name);
 
     unsafe {
         let mut ofn: OPENFILENAMEW = zeroed();
@@ -638,5 +753,29 @@ pub fn query_bluetooth_crush80() -> Option<BluetoothBatteryInfo> {
             name,
             battery: matched_battery,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_copy_utf16_truncated_preserves_surrogate_pairs() {
+        // Each 🔥 is 2 UTF-16 code units (surrogate pair).
+        // Into a 6-u16 buffer (5 payload + 1 NUL), at most 2 emojis = 4 code units fit cleanly.
+        let mut buf = [0xFFFFu16; 6];
+        copy_utf16_truncated(&mut buf, "🔥🔥🔥🔥");
+        let nul_pos = buf.iter().position(|&c| c == 0).unwrap();
+        assert_eq!(nul_pos, 4);
+        assert_eq!(String::from_utf16(&buf[..nul_pos]).unwrap(), "🔥🔥");
+    }
+
+    #[test]
+    fn test_build_filter_wide_double_null_terminated() {
+        let w = build_filter_wide("JSON Profile (*.json)", "*.json");
+        assert!(w.len() >= 4);
+        assert_eq!(w[w.len() - 1], 0);
+        assert_eq!(w[w.len() - 2], 0);
     }
 }

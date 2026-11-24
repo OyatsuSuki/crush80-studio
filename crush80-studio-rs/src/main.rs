@@ -6,6 +6,7 @@ mod i18n;
 mod keycodes;
 mod macro_codec;
 mod ota;
+mod storage;
 mod tray;
 mod win_sys;
 
@@ -296,7 +297,7 @@ impl Crush80App {
         setup_fonts(&cc.egui_ctx);
         setup_theme(&cc.egui_ctx);
 
-        let data_dir = resolve_data_dir();
+        let data_dir = storage::resolve_data_dir();
         let profiles_dir = data_dir.join("profiles");
         let _ = std::fs::create_dir_all(&profiles_dir);
         let autoswitch_path = data_dir.join("autoswitch.json");
@@ -314,7 +315,7 @@ impl Crush80App {
         }));
         spawn_watcher(hid.clone(), autoswitch.clone(), profiles_dir.clone());
 
-        let tray = TrayState::new();
+        let tray = TrayState::new(hid.clone());
         let s = tr(lang);
         tray.update_menu_labels(s.tray_show, s.tray_quit);
         spawn_tray(tray.clone());
@@ -3009,17 +3010,6 @@ fn find_bundled_firmware(rel_candidates: &[&str]) -> Option<PathBuf> {
         }
     }
     None
-}
-
-fn resolve_data_dir() -> PathBuf {
-    let shared = PathBuf::from(r"d:\Workspace\Antigravity\Crush80Driver\studio");
-    if shared.exists() {
-        return shared;
-    }
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("data")))
-        .unwrap_or_else(|| PathBuf::from("data"))
 }
 
 fn setup_fonts(ctx: &egui::Context) {
