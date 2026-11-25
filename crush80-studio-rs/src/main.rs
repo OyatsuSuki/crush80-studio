@@ -34,11 +34,32 @@ use ui::widgets::*;
 
 pub const PID_USB: u16 = 0x5055;
 
-/// HID keycodes matching the 14 slots returned by `win_sys::poll_win32_special_keys()`:
-/// `[LCtrl, RCtrl, LShift, RShift, LAlt, RAlt, LWin, RWin, CapsLock, PrtSc, ScrLk, Pause, Menu, F13]`.
-pub const WIN32_SPECIAL_HIDS: [u8; 14] = [
-    0xE0, 0xE4, 0xE1, 0xE5, 0xE2, 0xE6, 0xE3, 0xE7, 0x39, 0x46, 0x47, 0x48, 0x65, 0x68,
+/// HID keycodes matching the 15 slots returned by `win_sys::poll_win32_special_keys()`:
+/// `[LCtrl, RCtrl, LShift, RShift, LAlt, RAlt, LWin, RWin, CapsLock, PrtSc, ScrLk, Pause, Menu, F13, Mute]`.
+pub const WIN32_SPECIAL_HIDS: [u8; win_sys::SPECIAL_KEY_COUNT] = [
+    0xE0, 0xE4, 0xE1, 0xE5, 0xE2, 0xE6, 0xE3, 0xE7, 0x39, 0x46, 0x47, 0x48, 0x65, 0x68, 0xA8,
 ];
+
+#[derive(Clone, Debug, Default)]
+pub struct TesterKeyStats {
+    pub count: u64,
+    pub down_at: Option<Instant>,
+    pub last_press: Option<Instant>,
+    pub last_release: Option<Instant>,
+    pub min_dt_ms: Option<u64>,
+    pub min_bounce_ms: Option<u64>,
+    pub last_hold_ms: Option<u64>,
+    pub chatter_count: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct TesterEvent {
+    pub hid: u8,
+    pub name: String,
+    pub dt_ms: Option<u64>,
+    pub hold_ms: Option<u64>,
+    pub is_chatter: bool,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum NavTab {
@@ -101,7 +122,7 @@ pub struct Crush80App {
     pub macro_recording: bool,
     pub macro_record_delays: bool,
     pub macro_last_event_time: Option<Instant>,
-    pub macro_prev_special: [bool; 14],
+    pub macro_prev_special: [bool; win_sys::SPECIAL_KEY_COUNT],
     pub macro_text_input: String,
     pub macro_delay_input: u16,
     // Profiles
@@ -115,12 +136,13 @@ pub struct Crush80App {
     pub tester_pressed: HashSet<u8>,
     pub tester_tested: HashSet<u8>,
     pub tester_chatter_keys: HashSet<u8>,
-    pub tester_last_press: HashMap<u8, Instant>,
-    pub tester_prev_special: [bool; 14],
+    pub tester_stats: HashMap<u8, TesterKeyStats>,
+    pub tester_prev_special: [bool; win_sys::SPECIAL_KEY_COUNT],
+    pub tester_threshold_ms: u64,
     pub tester_total: u64,
     pub tester_chatter_count: u64,
-    pub tester_last_dt_ms: Option<u64>,
-    pub tester_log: VecDeque<(String, Option<u64>, bool)>,
+    pub tester_min_dt_ms: Option<u64>,
+    pub tester_log: VecDeque<TesterEvent>,
     // OTA Firmware Flasher
     pub ota_image_path: Option<PathBuf>,
     pub ota_image_bytes: Option<Vec<u8>>,
@@ -239,7 +261,7 @@ impl Crush80App {
             macro_recording: false,
             macro_record_delays: false,
             macro_last_event_time: None,
-            macro_prev_special: [false; 14],
+            macro_prev_special: [false; win_sys::SPECIAL_KEY_COUNT],
             macro_text_input: String::new(),
             macro_delay_input: 50,
             profiles_dir,
@@ -250,11 +272,12 @@ impl Crush80App {
             tester_pressed: HashSet::new(),
             tester_tested: HashSet::new(),
             tester_chatter_keys: HashSet::new(),
-            tester_last_press: HashMap::new(),
-            tester_prev_special: [false; 14],
+            tester_stats: HashMap::new(),
+            tester_prev_special: [false; win_sys::SPECIAL_KEY_COUNT],
+            tester_threshold_ms: 80,
             tester_total: 0,
             tester_chatter_count: 0,
-            tester_last_dt_ms: None,
+            tester_min_dt_ms: None,
             tester_log: VecDeque::new(),
             ota_image_path: None,
             ota_image_bytes: None,
@@ -406,27 +429,89 @@ impl Crush80App {
         }
     }
 
+    pub fn reset_tester(&mut self) {
+        self.tester_pressed.clear();
+        self.tester_tested.clear();
+        self.tester_chatter_keys.clear();
+        self.tester_stats.clear();
+        self.tester_prev_special = [false; win_sys::SPECIAL_KEY_COUNT];
+        self.tester_total = 0;
+        self.tester_chatter_count = 0;
+        self.tester_min_dt_ms = None;
+        self.tester_log.clear();
+    }
+
     pub fn record_tester_press(&mut self, hid: u8, now: Instant) {
-        self.tester_pressed.insert(hid);
+        if !self.tester_pressed.insert(hid) {
+            return;
+        }
         self.tester_tested.insert(hid);
         self.tester_total += 1;
-        let dt_ms = self
-            .tester_last_press
-            .get(&hid)
-            .map(|prev| now.saturating_duration_since(*prev).as_millis() as u64);
-        self.tester_last_press.insert(hid, now);
-        let is_chatter = dt_ms.map(|d| d < 50).unwrap_or(false);
+
+        let entry = self.tester_stats.entry(hid).or_default();
+        let press_dt = entry
+            .last_press
+            .map(|prev| now.saturating_duration_since(prev).as_millis() as u64);
+        let bounce_dt = entry
+            .last_release
+            .map(|prev| now.saturating_duration_since(prev).as_millis() as u64);
+        // Use the tighter of press-to-press or release-to-press bounce as effective gap
+        let effective_dt = match (press_dt, bounce_dt) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+
+        entry.count += 1;
+        entry.down_at = Some(now);
+        entry.last_press = Some(now);
+        if let Some(d) = press_dt {
+            entry.min_dt_ms = Some(entry.min_dt_ms.map_or(d, |cur| cur.min(d)));
+        }
+        if let Some(b) = bounce_dt {
+            entry.min_bounce_ms = Some(entry.min_bounce_ms.map_or(b, |cur| cur.min(b)));
+        }
+
+        let is_chatter = effective_dt
+            .map(|d| d < self.tester_threshold_ms)
+            .unwrap_or(false);
         if is_chatter {
+            entry.chatter_count += 1;
             self.tester_chatter_count += 1;
             self.tester_chatter_keys.insert(hid);
         }
-        if let Some(d) = dt_ms {
-            self.tester_last_dt_ms = Some(d);
+        if let Some(d) = effective_dt {
+            self.tester_min_dt_ms = Some(self.tester_min_dt_ms.map_or(d, |cur| cur.min(d)));
         }
-        self.tester_log
-            .push_front((hid_to_name(hid).to_string(), dt_ms, is_chatter));
-        while self.tester_log.len() > 24 {
+
+        self.tester_log.push_front(TesterEvent {
+            hid,
+            name: hid_to_name(hid).to_string(),
+            dt_ms: effective_dt,
+            hold_ms: None,
+            is_chatter,
+        });
+        while self.tester_log.len() > 60 {
             self.tester_log.pop_back();
+        }
+    }
+
+    pub fn record_tester_release(&mut self, hid: u8, now: Instant) {
+        self.tester_pressed.remove(&hid);
+        if let Some(entry) = self.tester_stats.get_mut(&hid) {
+            entry.last_release = Some(now);
+            if let Some(down) = entry.down_at.take() {
+                let hold = now.saturating_duration_since(down).as_millis() as u64;
+                entry.last_hold_ms = Some(hold);
+                if let Some(ev) = self
+                    .tester_log
+                    .iter_mut()
+                    .find(|e| e.hid == hid && e.hold_ms.is_none())
+                {
+                    ev.hold_ms = Some(hold);
+                }
+            }
         }
     }
 
@@ -687,8 +772,10 @@ impl eframe::App for Crush80App {
             && self.rgb.effect != 0
         {
             ctx.request_repaint_after(Duration::from_millis(50));
-        } else if is_focused && (self.tab == NavTab::Tester || self.macro_recording) {
-            ctx.request_repaint_after(Duration::from_millis(25));
+        } else if is_focused && self.tab == NavTab::Tester {
+            ctx.request_repaint_after(Duration::from_millis(8));
+        } else if is_focused && self.macro_recording {
+            ctx.request_repaint_after(Duration::from_millis(20));
         } else {
             ctx.request_repaint_after(Duration::from_millis(250));
         }

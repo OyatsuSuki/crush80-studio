@@ -203,14 +203,17 @@ pub fn danger_button(ui: &mut egui::Ui, label: &str) -> bool {
 }
 
 pub fn pill_badge(ui: &mut egui::Ui, text: &str, col: Color32) {
+    let font = egui::FontId::proportional(11.0);
+    let galley = ui.painter().layout_no_wrap(text.to_string(), font, col);
+    let desired = Vec2::new(galley.size().x + 18.0, galley.size().y + 6.0);
+    let (rect, _) = ui.allocate_exact_size(desired, Sense::hover());
     let bg = Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 26);
-    egui::Frame::none()
-        .fill(bg)
-        .rounding(Rounding::same(99.0))
-        .inner_margin(egui::Margin::symmetric(9.0, 3.0))
-        .show(ui, |ui| {
-            ui.label(RichText::new(text).size(11.0).strong().color(col));
-        });
+    ui.painter().rect_filled(rect, Rounding::same(99.0), bg);
+    let text_pos = Pos2::new(
+        rect.min.x + 9.0,
+        rect.center().y - galley.size().y * 0.5,
+    );
+    ui.painter().galley(text_pos, galley, col);
 }
 
 pub fn card_frame() -> egui::Frame {

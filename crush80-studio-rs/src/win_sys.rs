@@ -110,10 +110,12 @@ extern "system" {
     fn GetAsyncKeyState(vkey: i32) -> i16;
 }
 
+pub const SPECIAL_KEY_COUNT: usize = 15;
+
 /// Polls hardware-distinguished modifier & special keys directly from Win32:
-/// `[LCtrl, RCtrl, LShift, RShift, LAlt, RAlt, LWin, RWin, CapsLock, PrtSc, ScrLk, Pause, Menu, F13]`.
-pub fn poll_win32_special_keys() -> [bool; 14] {
-    const VKS: [i32; 14] = [
+/// `[LCtrl, RCtrl, LShift, RShift, LAlt, RAlt, LWin, RWin, CapsLock, PrtSc, ScrLk, Pause, Menu, F13, Mute]`.
+pub fn poll_win32_special_keys() -> [bool; SPECIAL_KEY_COUNT] {
+    const VKS: [i32; SPECIAL_KEY_COUNT] = [
         0xA2, // VK_LCONTROL
         0xA3, // VK_RCONTROL
         0xA0, // VK_LSHIFT
@@ -128,8 +130,9 @@ pub fn poll_win32_special_keys() -> [bool; 14] {
         0x13, // VK_PAUSE
         0x5D, // VK_APPS (Menu)
         0x7C, // VK_F13
+        0xAD, // VK_VOLUME_MUTE
     ];
-    let mut out = [false; 14];
+    let mut out = [false; SPECIAL_KEY_COUNT];
     unsafe {
         for (i, &vk) in VKS.iter().enumerate() {
             out[i] = (GetAsyncKeyState(vk) as u16 & 0x8000) != 0;
@@ -143,15 +146,15 @@ pub fn poll_win32_special_keys() -> [bool; 14] {
 /// - When `focused == false`, NEVER captures new presses from other apps, but still emits
 ///   falling edges for keys that were already held so held modifiers close cleanly.
 pub fn step_special_keys(
-    prev: [bool; 14],
-    cur: [bool; 14],
-    hids: &[u8; 14],
+    prev: [bool; SPECIAL_KEY_COUNT],
+    cur: [bool; SPECIAL_KEY_COUNT],
+    hids: &[u8; SPECIAL_KEY_COUNT],
     focused: bool,
-) -> (Vec<u8>, Vec<u8>, [bool; 14]) {
+) -> (Vec<u8>, Vec<u8>, [bool; SPECIAL_KEY_COUNT]) {
     let mut pressed = Vec::new();
     let mut released = Vec::new();
-    let mut next = [false; 14];
-    for i in 0..14 {
+    let mut next = [false; SPECIAL_KEY_COUNT];
+    for i in 0..SPECIAL_KEY_COUNT {
         if focused {
             if !prev[i] && cur[i] {
                 pressed.push(hids[i]);
@@ -813,11 +816,12 @@ mod tests {
 
     #[test]
     fn test_step_special_keys_blocks_new_presses_when_unfocused_but_allows_releases() {
-        let hids: [u8; 14] = [
+        let hids: [u8; SPECIAL_KEY_COUNT] = [
             0xE0, 0xE4, 0xE1, 0xE5, 0xE2, 0xE6, 0xE3, 0xE7, 0x39, 0x46, 0x47, 0x48, 0x65, 0x68,
+            0xA8,
         ];
-        let none = [false; 14];
-        let mut ctrl_down = [false; 14];
+        let none = [false; SPECIAL_KEY_COUNT];
+        let mut ctrl_down = [false; SPECIAL_KEY_COUNT];
         ctrl_down[0] = true; // LCtrl (0xE0)
 
         // Unfocused: pressing LCtrl in another app MUST NOT be captured
