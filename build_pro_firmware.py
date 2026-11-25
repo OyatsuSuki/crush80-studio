@@ -7,10 +7,12 @@ Features added on top of verified NativeHeld v1.3.0 (all 100% rc2emu verified):
      - id 21 : Win Key Lock (0xFF = Locked, 0x00 = Unlocked)
      - id 26 : OS Mode (0x00 = Windows L0/1, 0x01 = macOS L2/3)
      - id 29 : Ultra-Low-Latency ISR Debounce (0xFF = ISR Fast, 0x00 = Standard)
-     - id 32/33/35 : Logo Badge RGB Mode / Color / Power (0=On, 1=Off)
-     - id 36/37/39 : Side Underglow RGB Mode / Color / Power (0=On, 1=Off)
+     - id 32/33/34/35 : Logo Badge Mode / Rainbow(0xFF)/Single(0x00) / 45-Color Index / Power (0=On, 1=Off)
+     - id 36/37/38/39 : Side Underglow Mode / Rainbow(0xFF)/Single(0x00) / 45-Color Index / Power (0=On, 1=Off)
      - id 40 : Master RGB System Power (0=On, 1=Off)
      - id 60 : Dynamic Tap-Hold Tapping Term in 10ms units (0 = default 200ms, e.g. 15 = 150ms)
+     - id 0xFD : OEM Logo LED Physical Feedback (SET writes gp[759..763]; GET is read-only)
+     - id 0xFE : Live Battery % Readout (gp+0x10C)
   2. Dynamic Tap-Hold Tapping Term (100ms..300ms live-adjustable via CONFIG[60]).
 
 OEM bootloader, OTA stack, RGB startup, and sleep lifecycle hooks remain 100% untouched.
@@ -24,7 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT / "wobkey-crush80-reboot-pro-firmware"
 SRC_BIN = REPO / "firmware/patched/Crush80-RGB-0108-NativeHeld-20261101.bin"
-OUT_BIN = ROOT / "Crush80-RGB-Ember-v1.2.0.bin"
+OUT_BIN = ROOT / "Crush80-RGB-Ember-v1.3.0.bin"
 
 EXPECTED_SRC_SHA256 = "3b6c6755b1a3b263d6e55c2a4415d7e91689ac43f897b3be970b236ef970de3a"
 
@@ -194,12 +196,12 @@ def build_patch(src: bytes) -> bytes:
     emit32(out, enc_jal(ZERO, CONFIG_HANDLER - (0x12E6C + len(out))))  # +0x38 (4B): universal CONFIG GET/SET
     assert len(out) == 0x3C
 
-    # +0x3C: check id == 0xFD (a0 == 0xFC) -> OEM Logo LED feedback
+    # +0x3C: check id == 0xFD (a0 == 0xFC) -> OEM Logo LED feedback (SET writes 5B; GET is read-only)
     emit32(out, enc_addi(A1, ZERO, 0xFC))    # +0x3C (4B): a1 = 0xFC
     emit32(out, enc_bne(A0, A1, 14))         # +0x40 (4B): if != 0xFC -> +0x4E (check 0xFE)
     emit32(out, enc_addi(A2, GP, 759))       # +0x44 (4B): dst = &gp[759] (B, G, R, count, frame_cnt)
-    emit16(out, enc_c_li(A1, 5))             # +0x48 (2B): copy 5 bytes pkt[3..7] -> gp[759..763]
-    emit32(out, enc_jal(ZERO, COPY_HELPER - (0x12E6C + len(out))))  # +0x4A (4B): tail-call copy+ret!
+    emit16(out, enc_c_li(A1, 5))             # +0x48 (2B): copy 5 bytes pkt[3..7] -> gp[759..763] on SET
+    emit32(out, enc_jal(ZERO, (CONFIG_HANDLER + 2) - (0x12E6C + len(out))))  # +0x4A (4B): SET->COPY_HELPER, GET->CONFIG_GET!
     assert len(out) == 0x4E
 
     # +0x4E: check id == 0xFE (a0 == 0xFD) -> Live battery % read
@@ -270,10 +272,12 @@ def verify_in_emulator(patched: bytes):
         (26, 0x01),  # macOS mode
         (29, 0xFF),  # Low-Latency ISR Debounce ON
         (32, 0x02),  # Logo Mode
-        (33, 0xFF),  # Logo Rainbow
+        (33, 0x00),  # Logo Single Color Mode
+        (34, 21),    # Logo Spectrum Index (Cyan)
         (35, 0x01),  # Logo Power OFF
         (36, 0x03),  # Side Mode
-        (37, 0x00),  # Side Color
+        (37, 0x00),  # Side Single Color Mode
+        (38, 34),    # Side Spectrum Index (Violet)
         (39, 0x01),  # Side Power OFF
         (40, 0x01),  # Master RGB Power OFF
         (60, 14),    # Tap-Hold Tapping Term = 140ms
@@ -298,6 +302,11 @@ def verify_in_emulator(patched: bytes):
 
     via(bytes([0x07, 0x03, 0xFD, 153, 211, 52, 2, 0]))   # Mint x2 (Profile Switch)
     assert peek_blink() == (153, 211, 52, 2, 0), f"Mint x2 blink mismatch: {peek_blink()}"
+
+    # GET 0xFD must be read-only (must NOT overwrite gp+759..763!)
+    r_get_fd = via(bytes([0x08, 0x03, 0xFD, 1, 2, 3, 4, 5]))
+    assert peek_blink() == (153, 211, 52, 2, 0), f"GET 0xFD mutated LED feedback state: {peek_blink()}"
+    assert r_get_fd[3] == 153, f"GET 0xFD did not return gp[759]: {r_get_fd[3]}"
 
     # 2C. Test VIA 0x0E (macro buffer read) & 0x12 (keymap buffer read) remain 100% intact!
     m.stub(0x2000A7CE, lambda mm: None)  # flash_read stub

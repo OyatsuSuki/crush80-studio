@@ -172,6 +172,7 @@ pub fn known_firmware_name_opt(crc: u32) -> Option<&'static str> {
         0xC03D_5821 => Some("Ember"),
         0x6C8D_7399 => Some("Ember"),
         0x0AAC_EB06 => Some("Ember"),
+        0x676B_6326 => Some("Ember"),
         _ => None,
     }
 }
@@ -181,6 +182,7 @@ pub fn known_firmware_sha256(crc: u32) -> Option<&'static str> {
     match crc {
         0x2F4F_4974 => Some("3b6c6755b1a3b263d6e55c2a4415d7e91689ac43f897b3be970b236ef970de3a"),
         0x0AAC_EB06 => Some("56125ed4ec7a6edf5e05780f8fc86055863ecc39d0bf3ead2dc21bfce8a3e11c"),
+        0x676B_6326 => Some("58b8689c1d4af5e27dc32cf4646f2d1921507d72f5d61cf0a9a9b611ebbb2aae"),
         _ => None,
     }
 }
