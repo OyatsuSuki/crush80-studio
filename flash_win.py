@@ -77,8 +77,10 @@ if __name__ == "__main__":
     EMBER12_OLD_CRC = 0x6C8D7399
     EMBER12_SHA = "56125ed4ec7a6edf5e05780f8fc86055863ecc39d0bf3ead2dc21bfce8a3e11c"
     EMBER12_CRC = 0x0AACEB06
+    EMBER13_SHA = "58b8689c1d4af5e27dc32cf4646f2d1921507d72f5d61cf0a9a9b611ebbb2aae"
+    EMBER13_CRC = 0x676B6326
 
-    ALL_CUSTOM = (WEBRAINBOW_CRC, PROSUITE_CRC, PROSUITE2_CRC, PROSUITE3_CRC, EMBER12_OLD_CRC, EMBER12_CRC)
+    ALL_CUSTOM = (WEBRAINBOW_CRC, PROSUITE_CRC, PROSUITE2_CRC, PROSUITE3_CRC, EMBER12_OLD_CRC, EMBER12_CRC, EMBER13_CRC)
     crush80.APPROVED_FLASH_IMAGES[WEBRAINBOW_SHA] = {
         "name": "NativeHeld v1.3.0 + WebRainbow (VIA id=5)",
         "crc": WEBRAINBOW_CRC,
@@ -102,6 +104,11 @@ if __name__ == "__main__":
     crush80.APPROVED_FLASH_IMAGES[EMBER12_SHA] = {
         "name": "Ember (Logo LED Feedback)",
         "crc": EMBER12_CRC,
+        "from_crcs": (0xCA2D85DC, 0x2F4F4974) + ALL_CUSTOM,
+    }
+    crush80.APPROVED_FLASH_IMAGES[EMBER13_SHA] = {
+        "name": "Ember v1.3.0 (0xFD GET/SET Guard)",
+        "crc": EMBER13_CRC,
         "from_crcs": (0xCA2D85DC, 0x2F4F4974) + ALL_CUSTOM,
     }
     # Allow seamless rollback from custom builds back to Official 0108 or stock NativeHeld v1.3.0
