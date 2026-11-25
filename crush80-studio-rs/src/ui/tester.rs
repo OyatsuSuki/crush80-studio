@@ -15,8 +15,9 @@ impl Crush80App {
         // (eliminates Windows egui `Modifiers::command == ctrl` phantom LWin bug and detects
         // LCtrl/RCtrl/LShift/RShift/LAlt/RAlt/LWin/RWin/CapsLock/PrtSc/ScrLk/Pause/Menu/F13!)
         let now = Instant::now();
-        let events: Vec<(egui::Key, bool)> = ui.ctx().input(|i| {
-            i.events
+        let (events, focused) = ui.ctx().input(|i| {
+            let evs: Vec<(egui::Key, bool)> = i
+                .events
                 .iter()
                 .filter_map(|ev| match ev {
                     egui::Event::Key {
@@ -27,28 +28,34 @@ impl Crush80App {
                     } => Some((*key, *pressed)),
                     _ => None,
                 })
-                .collect()
+                .collect();
+            (evs, i.focused)
         });
 
         let cur_special = win_sys::poll_win32_special_keys();
-        let prev_special = self.tester_prev_special;
-        for i in 0..WIN32_SPECIAL_HIDS.len() {
-            let hid = WIN32_SPECIAL_HIDS[i];
-            if !prev_special[i] && cur_special[i] {
-                self.record_tester_press(hid, now);
-            } else if prev_special[i] && !cur_special[i] {
-                self.tester_pressed.remove(&hid);
-            }
+        let (spec_down, spec_up, next_special) = win_sys::step_special_keys(
+            self.tester_prev_special,
+            cur_special,
+            &WIN32_SPECIAL_HIDS,
+            focused,
+        );
+        for hid in spec_down {
+            self.record_tester_press(hid, now);
         }
-        self.tester_prev_special = cur_special;
+        for hid in spec_up {
+            self.tester_pressed.remove(&hid);
+        }
+        self.tester_prev_special = next_special;
 
-        for (key, pressed) in events {
-            if let Some(hid) = egui_key_to_hid(key) {
-                if !WIN32_SPECIAL_HIDS.contains(&hid) {
-                    if pressed {
-                        self.record_tester_press(hid, now);
-                    } else {
-                        self.tester_pressed.remove(&hid);
+        if focused {
+            for (key, pressed) in events {
+                if let Some(hid) = egui_key_to_hid(key) {
+                    if !WIN32_SPECIAL_HIDS.contains(&hid) {
+                        if pressed {
+                            self.record_tester_press(hid, now);
+                        } else {
+                            self.tester_pressed.remove(&hid);
+                        }
                     }
                 }
             }

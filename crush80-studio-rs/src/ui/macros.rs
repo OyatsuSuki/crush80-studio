@@ -15,12 +15,13 @@ impl Crush80App {
         let s = tr(self.lang);
         let can_write = self.can_via_write();
 
-        // Live keyboard recording capture using Win32 hardware-distinguished modifiers
-        // (fixes Windows egui `Modifiers::command == ctrl` phantom LWin bug!).
+        // Live keyboard recording capture using focus-gated Win32 hardware-distinguished modifiers
+        // (fixes Windows egui `Modifiers::command == ctrl` phantom LWin bug and never spies unfocused apps!).
         if self.macro_recording {
             let now = Instant::now();
-            let events: Vec<(egui::Key, bool)> = ui.ctx().input(|i| {
-                i.events
+            let (events, focused) = ui.ctx().input(|i| {
+                let evs: Vec<(egui::Key, bool)> = i
+                    .events
                     .iter()
                     .filter_map(|ev| match ev {
                         egui::Event::Key {
@@ -31,31 +32,34 @@ impl Crush80App {
                         } => Some((*key, *pressed)),
                         _ => None,
                     })
-                    .collect()
+                    .collect();
+                (evs, i.focused)
             });
 
             let cur_special = win_sys::poll_win32_special_keys();
-            let prev_special = self.macro_prev_special;
+            let (spec_down, spec_up, next_special) = win_sys::step_special_keys(
+                self.macro_prev_special,
+                cur_special,
+                &WIN32_SPECIAL_HIDS,
+                focused,
+            );
 
-            // Emit modifier/special key Downs first so chords record cleanly as Down(Mod), Tap(Key), Up(Mod)
-            for i in 0..WIN32_SPECIAL_HIDS.len() {
-                if !prev_special[i] && cur_special[i] {
-                    self.push_recorded_macro_key(WIN32_SPECIAL_HIDS[i], true, now);
-                }
+            for hid in spec_down {
+                self.push_recorded_macro_key(hid, true, now);
             }
-            for (key, pressed) in events {
-                if let Some(hid) = egui_key_to_hid(key) {
-                    if !WIN32_SPECIAL_HIDS.contains(&hid) {
-                        self.push_recorded_macro_key(hid, pressed, now);
+            if focused {
+                for (key, pressed) in events {
+                    if let Some(hid) = egui_key_to_hid(key) {
+                        if !WIN32_SPECIAL_HIDS.contains(&hid) {
+                            self.push_recorded_macro_key(hid, pressed, now);
+                        }
                     }
                 }
             }
-            for i in 0..WIN32_SPECIAL_HIDS.len() {
-                if prev_special[i] && !cur_special[i] {
-                    self.push_recorded_macro_key(WIN32_SPECIAL_HIDS[i], false, now);
-                }
+            for hid in spec_up {
+                self.push_recorded_macro_key(hid, false, now);
             }
-            self.macro_prev_special = cur_special;
+            self.macro_prev_special = next_special;
         }
 
         let used = encoded_byte_len(&self.macro_slots);

@@ -138,6 +138,37 @@ pub fn poll_win32_special_keys() -> [bool; 14] {
     out
 }
 
+/// Focus-gated edge detector for `poll_win32_special_keys()`:
+/// - When `focused == true`, records both rising edges (pressed) and falling edges (released).
+/// - When `focused == false`, NEVER captures new presses from other apps, but still emits
+///   falling edges for keys that were already held so held modifiers close cleanly.
+pub fn step_special_keys(
+    prev: [bool; 14],
+    cur: [bool; 14],
+    hids: &[u8; 14],
+    focused: bool,
+) -> (Vec<u8>, Vec<u8>, [bool; 14]) {
+    let mut pressed = Vec::new();
+    let mut released = Vec::new();
+    let mut next = [false; 14];
+    for i in 0..14 {
+        if focused {
+            if !prev[i] && cur[i] {
+                pressed.push(hids[i]);
+            } else if prev[i] && !cur[i] {
+                released.push(hids[i]);
+            }
+            next[i] = cur[i];
+        } else {
+            if prev[i] && !cur[i] {
+                released.push(hids[i]);
+            }
+            next[i] = prev[i] && cur[i];
+        }
+    }
+    (pressed, released, next)
+}
+
 // ============================================================================
 // 1. Single-instance guard
 // ============================================================================
@@ -778,5 +809,33 @@ mod tests {
         assert!(w.len() >= 4);
         assert_eq!(w[w.len() - 1], 0);
         assert_eq!(w[w.len() - 2], 0);
+    }
+
+    #[test]
+    fn test_step_special_keys_blocks_new_presses_when_unfocused_but_allows_releases() {
+        let hids: [u8; 14] = [
+            0xE0, 0xE4, 0xE1, 0xE5, 0xE2, 0xE6, 0xE3, 0xE7, 0x39, 0x46, 0x47, 0x48, 0x65, 0x68,
+        ];
+        let none = [false; 14];
+        let mut ctrl_down = [false; 14];
+        ctrl_down[0] = true; // LCtrl (0xE0)
+
+        // Unfocused: pressing LCtrl in another app MUST NOT be captured
+        let (pressed, released, next) = step_special_keys(none, ctrl_down, &hids, false);
+        assert!(pressed.is_empty());
+        assert!(released.is_empty());
+        assert_eq!(next, none);
+
+        // Focused: pressing LCtrl IS captured
+        let (pressed, released, next) = step_special_keys(none, ctrl_down, &hids, true);
+        assert_eq!(pressed, vec![0xE0]);
+        assert!(released.is_empty());
+        assert_eq!(next, ctrl_down);
+
+        // Focus lost while LCtrl held, then released: release IS emitted so Down(LCtrl) closes cleanly
+        let (pressed, released, next) = step_special_keys(ctrl_down, none, &hids, false);
+        assert!(pressed.is_empty());
+        assert_eq!(released, vec![0xE0]);
+        assert_eq!(next, none);
     }
 }

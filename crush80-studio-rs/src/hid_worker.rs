@@ -181,8 +181,18 @@ pub fn coalesce_next_cmd(first: HidCmd, queue: &mut VecDeque<HidCmd>) -> HidCmd 
     }
 }
 
-pub fn should_publish_live_update(last_ui_edit: Instant, now: Instant) -> bool {
-    now.saturating_duration_since(last_ui_edit) >= UI_EDIT_GRACE
+pub fn should_publish_live_update(last_ui_edit: Option<Instant>, now: Instant) -> bool {
+    match last_ui_edit {
+        None => true,
+        Some(t) => now.saturating_duration_since(t) >= UI_EDIT_GRACE,
+    }
+}
+
+pub fn should_probe_ble(last_ble_probe: Option<Instant>, now: Instant) -> bool {
+    match last_ble_probe {
+        None => true,
+        Some(t) => now.saturating_duration_since(t) >= ble_poll_interval(),
+    }
 }
 
 pub fn live_poll_interval(window_hidden: bool) -> Duration {
@@ -229,7 +239,7 @@ fn now_unix_ts() -> String {
 pub struct HidWorkerHandle {
     pub tx: mpsc::Sender<HidCmd>,
     pub rx: mpsc::Receiver<HidEvent>,
-    last_ui_edit: Arc<Mutex<Instant>>,
+    last_ui_edit: Arc<Mutex<Option<Instant>>>,
     lang: Arc<Mutex<Lang>>,
 }
 
@@ -242,7 +252,7 @@ impl HidWorkerHandle {
     ) -> Self {
         let (cmd_tx, cmd_rx) = mpsc::channel::<HidCmd>();
         let (ev_tx, ev_rx) = mpsc::channel::<HidEvent>();
-        let last_ui_edit = Arc::new(Mutex::new(Instant::now() - Duration::from_secs(5)));
+        let last_ui_edit = Arc::new(Mutex::new(None));
         let lang = Arc::new(Mutex::new(initial_lang));
 
         // 1. Command Worker Thread (handles all UI-initiated HID I/O off the UI thread)
@@ -447,7 +457,7 @@ impl HidWorkerHandle {
             let last_ui_edit = last_ui_edit.clone();
             let lang = lang.clone();
             std::thread::spawn(move || {
-                let mut last_ble_probe = Instant::now() - ble_poll_interval();
+                let mut last_ble_probe: Option<Instant> = None;
                 let mut cached_bt: Option<BluetoothBatteryInfo> = None;
                 let mut last_connected = false;
                 let mut last_pid = 0u16;
@@ -504,9 +514,10 @@ impl HidWorkerHandle {
                         }
                         Err(_) => {
                             // Only scan Windows PnP Bluetooth devices every 12s when USB/2.4G is offline
-                            if last_ble_probe.elapsed() >= ble_poll_interval() {
+                            let now = Instant::now();
+                            if should_probe_ble(last_ble_probe, now) {
                                 cached_bt = query_bluetooth_crush80();
-                                last_ble_probe = Instant::now();
+                                last_ble_probe = Some(now);
                             }
                             if let Some(bt) = cached_bt.clone() {
                                 update_tray_tip(&tray, cur_lang, true, PID_BLUETOOTH, bt.battery);
@@ -565,7 +576,7 @@ impl HidWorkerHandle {
 
     pub fn mark_ui_edit(&self) {
         if let Ok(mut t) = self.last_ui_edit.lock() {
-            *t = Instant::now();
+            *t = Some(Instant::now());
         }
     }
 
@@ -627,10 +638,18 @@ mod tests {
     #[test]
     fn test_live_sync_skips_stale_publish_when_ui_edited_mid_poll() {
         let now = Instant::now();
-        let recent = now - Duration::from_millis(400);
-        let old = now - Duration::from_millis(1500);
+        let recent = now.checked_sub(Duration::from_millis(400));
+        let old = now.checked_sub(Duration::from_millis(1500));
+        assert!(should_publish_live_update(None, now));
         assert!(!should_publish_live_update(recent, now));
         assert!(should_publish_live_update(old, now));
+    }
+
+    #[test]
+    fn test_ble_probe_triggers_immediately_when_none_without_instant_underflow() {
+        let now = Instant::now();
+        assert!(should_probe_ble(None, now));
+        assert!(!should_probe_ble(Some(now), now));
     }
 
     #[test]

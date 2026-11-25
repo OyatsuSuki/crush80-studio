@@ -677,13 +677,17 @@ impl eframe::App for Crush80App {
         // 3. Drain non-blocking HidWorker events (zero UI-thread HID blocking!)
         self.drain_worker_events();
 
-        // 4. Repaint cadence
-        if (self.tab == NavTab::Keymap || self.tab == NavTab::Rgb)
+        // 4. Repaint cadence (throttle when unfocused or hidden to tray to save CPU)
+        let is_focused = ctx.input(|i| i.focused);
+        let is_hidden = self.tray.window_hidden.load(Ordering::Relaxed);
+        if is_hidden {
+            ctx.request_repaint_after(Duration::from_millis(500));
+        } else if (self.tab == NavTab::Keymap || self.tab == NavTab::Rgb)
             && self.rgb.rainbow
             && self.rgb.effect != 0
         {
             ctx.request_repaint_after(Duration::from_millis(50));
-        } else if self.tab == NavTab::Tester || self.macro_recording {
+        } else if is_focused && (self.tab == NavTab::Tester || self.macro_recording) {
             ctx.request_repaint_after(Duration::from_millis(25));
         } else {
             ctx.request_repaint_after(Duration::from_millis(250));
@@ -740,6 +744,7 @@ impl eframe::App for Crush80App {
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if titlebar_win_btn(ui, 2) {
+                            self.macro_recording = false;
                             self.tray.hide_main_window();
                             self.set_toast(s.minimized_tray, false);
                         }
