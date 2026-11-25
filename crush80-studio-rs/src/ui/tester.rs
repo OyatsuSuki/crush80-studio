@@ -117,22 +117,42 @@ impl Crush80App {
                         ACCENT
                     },
                 );
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    for (col, lbl) in [
+                        (ROSE, s.tester_legend_chatter),
+                        (MINT, s.tester_legend_ok),
+                        (CYAN, s.tester_legend_active),
+                    ] {
+                        ui.label(RichText::new(lbl).size(11.0).color(TEXT_SEC));
+                        let (r, _) = ui.allocate_exact_size(Vec2::splat(8.0), egui::Sense::hover());
+                        ui.painter().circle_filled(r.center(), 3.8, col);
+                        ui.add_space(4.0);
+                    }
+                });
             });
 
             ui.add_space(10.0);
             ui.separator();
             ui.add_space(8.0);
 
-            egui::ScrollArea::vertical().max_height(155.0).show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    for (name, dt_opt, is_chatter) in &self.tester_log {
-                        let txt = match dt_opt {
-                            Some(d) => format!("{} ({}ms)", name, d),
-                            None => name.clone(),
-                        };
-                        pill_badge(ui, &txt, if *is_chatter { ROSE } else { TEXT_SEC });
-                    }
-                });
+            egui::ScrollArea::vertical().min_scrolled_height(120.0).max_height(180.0).show(ui, |ui| {
+                if self.tester_log.is_empty() {
+                    ui.add_space(28.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(RichText::new(s.tester_empty_hint).size(12.5).color(TEXT_DIM));
+                    });
+                } else {
+                    ui.horizontal_wrapped(|ui| {
+                        for (name, dt_opt, is_chatter) in &self.tester_log {
+                            let txt = match dt_opt {
+                                Some(d) => format!("{} ({}ms)", name, d),
+                                None => name.clone(),
+                            };
+                            pill_badge(ui, &txt, if *is_chatter { ROSE } else { TEXT_SEC });
+                        }
+                    });
+                }
             });
         });
     }

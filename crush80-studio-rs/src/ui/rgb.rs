@@ -258,7 +258,7 @@ impl Crush80App {
                                     effect: None,
                                     speed: None,
                                     color: Some((nh, ns)),
-                                    rainbow: None,
+                                    rainbow: Some(false),
                                     save: false,
                                 });
                             }
@@ -298,7 +298,7 @@ impl Crush80App {
                                     effect: None,
                                     speed: None,
                                     color: Some((h, sat)),
-                                    rainbow: None,
+                                    rainbow: Some(false),
                                     save: false,
                                 });
                             }

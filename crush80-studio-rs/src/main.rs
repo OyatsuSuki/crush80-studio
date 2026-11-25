@@ -524,6 +524,7 @@ impl Crush80App {
                     self.status.pid = pid;
                     if connected {
                         if pid == PID_BLUETOOTH {
+                            self.status.firmware_crc = None;
                             self.status.firmware_name = s.bt_readonly_hint.into();
                             if let Some(bt) = bt_info {
                                 self.hw.battery = bt.battery;
@@ -538,14 +539,13 @@ impl Crush80App {
                                 self.hw = h;
                             }
                             if !was_connected || old_pid != pid {
+                                self.status.firmware_crc = None;
                                 self.request_refresh_all();
-                                self.set_toast(
-                                    format!("{} · {}", s.reconnected, self.status.firmware_name),
-                                    false,
-                                );
+                                self.set_toast(s.reconnected, false);
                             }
                         }
                     } else {
+                        self.status.firmware_crc = None;
                         self.hw.battery = None;
                     }
                 }
@@ -695,6 +695,13 @@ impl eframe::App for Crush80App {
 
         let s = tr(self.lang);
 
+        // Paint opaque canvas background behind all panels so zero semi-transparent panel seams ever appear
+        ctx.layer_painter(egui::LayerId::background()).rect_filled(
+            ctx.screen_rect(),
+            Rounding::ZERO,
+            BG_CANVAS,
+        );
+
         // --- Custom Frameless Dark Title Bar ---
         egui::TopBottomPanel::top("custom_titlebar")
             .exact_height(36.0)
@@ -763,6 +770,7 @@ impl eframe::App for Crush80App {
         egui::SidePanel::left("rail")
             .resizable(false)
             .exact_width(224.0)
+            .show_separator_line(false)
             .frame(
                 egui::Frame::none()
                     .fill(BG_RAIL)
@@ -997,15 +1005,23 @@ impl eframe::App for Crush80App {
                     });
 
                     ui.add_space(8.0);
-                    let ref_btn =
-                        egui::Button::new(RichText::new(s.rescan).size(12.0).color(TEXT_PRI))
+                    let w = ui.available_width();
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(w, 32.0),
+                        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                        |ui| {
+                            let ref_btn = egui::Button::new(
+                                RichText::new(s.rescan).size(12.0).color(TEXT_PRI),
+                            )
                             .fill(BG_SURFACE)
                             .stroke(Stroke::new(1.0_f32, HAIRLINE))
                             .rounding(Rounding::same(8.0))
-                            .min_size(Vec2::new(ui.available_width(), 32.0));
-                    if ui.add(ref_btn).clicked() {
-                        self.request_refresh_all();
-                    }
+                            .min_size(Vec2::new(w, 32.0));
+                            if ui.add(ref_btn).clicked() {
+                                self.request_refresh_all();
+                            }
+                        },
+                    );
 
                     if !self.toast.is_empty() {
                         ui.add_space(8.0);

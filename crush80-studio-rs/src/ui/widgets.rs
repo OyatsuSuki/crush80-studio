@@ -15,11 +15,11 @@ pub fn nav_rail_button(ui: &mut egui::Ui, label: &str, icon_id: u8, active: bool
     };
     p.rect_filled(rect, Rounding::same(8.0), bg);
     if active {
-        let bar = Rect::from_min_size(
-            rect.min + Vec2::new(0.0, 7.0),
-            Vec2::new(3.0, rect.height() - 14.0),
+        p.rect_stroke(
+            rect,
+            Rounding::same(8.0),
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(245, 158, 11, 100)),
         );
-        p.rect_filled(bar, Rounding::same(2.0), ACCENT);
     }
 
     let col = if active {
@@ -155,6 +155,9 @@ pub fn toggle_switch(ui: &mut egui::Ui, on: &mut bool) -> bool {
         Color32::from_rgb(44, 52, 68)
     };
     p.rect_filled(rect, Rounding::same(10.0), bg);
+    if !*on || !ui.is_enabled() {
+        p.rect_stroke(rect, Rounding::same(10.0), Stroke::new(1.0_f32, HAIRLINE));
+    }
     let cx = if *on {
         rect.max.x - 10.0
     } else {
@@ -278,15 +281,21 @@ pub fn mod_label(m: u8) -> &'static str {
 }
 
 /// Shared keyboard chassis + plate allocation used by Keymap, RGB, and Key Tester.
+/// Scales cleanly up to flush-width on 1240px+ viewports and centers horizontally on ultra-wide monitors.
 pub fn allocate_keyboard_chassis(ui: &mut egui::Ui) -> (Pos2, f32) {
     let avail_w = ui.available_width().max(640.0);
     let pad_x = 18.0;
     let pad_y = 14.0;
-    let unit = ((avail_w - pad_x * 2.0) / 18.25).clamp(32.0, 47.0);
+    let unit = ((avail_w - pad_x * 2.0) / 18.25).clamp(32.0, 53.0);
     let board_w = unit * 18.25 + pad_x * 2.0;
     let board_h = unit * 6.25 + pad_y * 2.0;
 
-    let (chassis, _) = ui.allocate_exact_size(Vec2::new(board_w, board_h), Sense::hover());
+    let (outer, _) = ui.allocate_exact_size(Vec2::new(avail_w, board_h), Sense::hover());
+    let offset_x = ((avail_w - board_w) * 0.5).max(0.0);
+    let chassis = Rect::from_min_size(
+        Pos2::new(outer.min.x + offset_x, outer.min.y),
+        Vec2::new(board_w, board_h),
+    );
     let p = ui.painter();
     p.rect_filled(chassis, Rounding::same(16.0), Color32::from_rgb(20, 24, 33));
     p.rect_stroke(

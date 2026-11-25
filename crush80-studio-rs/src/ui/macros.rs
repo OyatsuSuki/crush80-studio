@@ -152,7 +152,7 @@ impl Crush80App {
                     self.macro_prev_special = win_sys::poll_win32_special_keys();
                 }
 
-                if chip_button(ui, "⏱ Delay", self.macro_record_delays) {
+                if chip_button(ui, s.macro_rec_delay, self.macro_record_delays) {
                     self.macro_record_delays = !self.macro_record_delays;
                 }
 

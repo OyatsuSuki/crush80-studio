@@ -9,8 +9,8 @@ pub const BG_SURFACE: Color32 = Color32::from_rgb(26, 31, 43);
 pub const BG_SURFACE_HOV: Color32 = Color32::from_rgb(35, 42, 58);
 pub const HAIRLINE: Color32 = Color32::from_rgb(36, 43, 58);
 pub const TEXT_PRI: Color32 = Color32::from_rgb(241, 245, 249);
-pub const TEXT_SEC: Color32 = Color32::from_rgb(148, 163, 184);
-pub const TEXT_DIM: Color32 = Color32::from_rgb(92, 104, 124);
+pub const TEXT_SEC: Color32 = Color32::from_rgb(156, 170, 190);
+pub const TEXT_DIM: Color32 = Color32::from_rgb(122, 136, 160);
 
 pub const ACCENT: Color32 = Color32::from_rgb(245, 158, 11);
 pub const ACCENT_SOFT: Color32 = Color32::from_rgba_premultiplied(45, 30, 8, 255);
@@ -95,7 +95,7 @@ pub fn setup_theme(ctx: &egui::Context) {
     v.panel_fill = BG_CANVAS;
     v.window_fill = BG_CARD;
     v.faint_bg_color = BG_SURFACE;
-    v.extreme_bg_color = Color32::from_rgb(13, 16, 23);
+    v.extreme_bg_color = Color32::from_rgb(28, 34, 48);
     v.override_text_color = Some(TEXT_PRI);
     v.window_rounding = Rounding::same(12.0);
     v.window_stroke = Stroke::new(1.0_f32, HAIRLINE);

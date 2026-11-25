@@ -26,26 +26,26 @@ impl Crush80App {
                     .rounding(Rounding::same(9.0))
                     .inner_margin(egui::Margin::same(4.0))
                     .show(ui, |ui| {
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            let names = ["L0 Win", "L1 Win Fn", "L2 Mac", "L3 Mac Fn"];
-                            for (i, n) in names.iter().enumerate() {
-                                let active = self.current_layer == i;
-                                let b = egui::Button::new(
-                                    RichText::new(*n)
-                                        .size(12.0)
-                                        .strong()
-                                        .color(if active { BG_CANVAS } else { TEXT_SEC }),
-                                )
-                                .fill(if active { ACCENT } else { Color32::TRANSPARENT })
-                                .stroke(Stroke::NONE)
-                                .rounding(Rounding::same(6.0))
-                                .min_size(Vec2::new(72.0, 26.0));
-                                if ui.add(b).clicked() {
-                                    self.current_layer = i;
-                                    self.sync_selected_hex();
-                                }
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        let names = ["L0 Win", "L1 Win Fn", "L2 Mac", "L3 Mac Fn"];
+                        // Inside right_to_left, render reversed so visual order is L0 -> L3 and box hugs content tightly
+                        for (i, n) in names.iter().enumerate().rev() {
+                            let active = self.current_layer == i;
+                            let b = egui::Button::new(
+                                RichText::new(*n)
+                                    .size(12.0)
+                                    .strong()
+                                    .color(if active { BG_CANVAS } else { TEXT_SEC }),
+                            )
+                            .fill(if active { ACCENT } else { Color32::TRANSPARENT })
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(6.0))
+                            .min_size(Vec2::new(72.0, 26.0));
+                            if ui.add(b).clicked() {
+                                self.current_layer = i;
+                                self.sync_selected_hex();
                             }
-                        });
+                        }
                     });
             });
         });
@@ -57,6 +57,7 @@ impl Crush80App {
         ui.columns(2, |cols| {
             // Left: 4-Layer Inspector
             card_frame().show(&mut cols[0], |ui| {
+                ui.set_min_height(256.0);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(s.inspector).size(14.5).strong().color(TEXT_PRI));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -151,6 +152,7 @@ impl Crush80App {
 
             // Right: Modular Key Drawer
             card_frame().show(&mut cols[1], |ui| {
+                ui.set_min_height(256.0);
                 ui.horizontal(|ui| {
                     for (t, name) in [
                         (PickerTab::ProBuilder, s.tab_builder),

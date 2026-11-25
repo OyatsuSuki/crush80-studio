@@ -117,6 +117,17 @@ impl Crush80App {
 
             ui.add_space(14.0);
             let names = self.profile_names.clone();
+            if names.is_empty() {
+                egui::Frame::none()
+                    .fill(BG_CANVAS)
+                    .stroke(Stroke::new(1.0_f32, HAIRLINE))
+                    .rounding(Rounding::same(9.0))
+                    .inner_margin(egui::Margin::symmetric(14.0, 20.0))
+                    .show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        ui.label(RichText::new(s.prof_empty_hint).size(12.5).color(TEXT_DIM));
+                    });
+            }
             for name in names {
                 egui::Frame::none()
                     .fill(BG_SURFACE)

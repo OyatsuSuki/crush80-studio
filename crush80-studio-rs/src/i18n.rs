@@ -160,6 +160,13 @@ pub struct Strings {
     pub ota_unknown_img_warn: &'static str,
     pub subtitle_pro: &'static str,
     pub subtitle_lite: &'static str,
+    pub offline_readonly_hint: &'static str,
+    pub macro_rec_delay: &'static str,
+    pub tester_empty_hint: &'static str,
+    pub tester_legend_active: &'static str,
+    pub tester_legend_ok: &'static str,
+    pub tester_legend_chatter: &'static str,
+    pub prof_empty_hint: &'static str,
 }
 
 pub fn tr(lang: Lang) -> &'static Strings {
@@ -310,6 +317,13 @@ static ZH: Strings = Strings {
     ota_unknown_img_warn: "警告：所选固件为未知自定义镜像，未经官方校验！",
     subtitle_pro: "PRO REBOOT",
     subtitle_lite: "LITE · NO-RGB",
+    offline_readonly_hint: "当前未连接或处于蓝牙只读模式，连接 USB 有线或 2.4G 接收器后即可实时写入硬件。",
+    macro_rec_delay: "录制延时",
+    tester_empty_hint: "按下键盘任意按键即可实时检测触发状态，间隔小于 50 ms 将自动标红告警",
+    tester_legend_active: "按下",
+    tester_legend_ok: "已测正常",
+    tester_legend_chatter: "疑似连击",
+    prof_empty_hint: "尚未保存配置方案，在上方输入名称即可将当前键位、宏与灯光存为快照",
 };
 
 static EN: Strings = Strings {
@@ -452,6 +466,13 @@ static EN: Strings = Strings {
     ota_unknown_img_warn: "Warning: Target firmware is an unrecognized custom image!",
     subtitle_pro: "PRO REBOOT",
     subtitle_lite: "LITE · NO-RGB",
+    offline_readonly_hint: "Keyboard disconnected or in Bluetooth read-only mode. Connect via USB wired or 2.4G dongle to edit hardware settings.",
+    macro_rec_delay: "Record Delays",
+    tester_empty_hint: "Press any key to verify actuation live. Intervals under 50 ms are flagged in red as switch chatter.",
+    tester_legend_active: "Active",
+    tester_legend_ok: "Verified",
+    tester_legend_chatter: "Chatter",
+    prof_empty_hint: "No saved profiles yet. Enter a name above to snapshot your current keymap, macros, and lighting.",
 };
 
 static JA: Strings = Strings {
@@ -594,6 +615,13 @@ static JA: Strings = Strings {
     ota_unknown_img_warn: "警告：選択したファイルは未確認のカスタムファームウェアです！",
     subtitle_pro: "PRO REBOOT",
     subtitle_lite: "LITE · NO-RGB",
+    offline_readonly_hint: "未接続または Bluetooth 閲覧専用モードです。USB 有線または 2.4G で接続すると本体へ書き込めます。",
+    macro_rec_delay: "待機も記録",
+    tester_empty_hint: "任意のキーを押すと入力状態をリアルタイム表示します。50 ms 未満の連続入力は赤色で警告されます。",
+    tester_legend_active: "押下中",
+    tester_legend_ok: "正常",
+    tester_legend_chatter: "チャタリング",
+    prof_empty_hint: "保存済みプロファイルはありません。上に名前を入力して現在の設定を保存できます。",
 };
 
 pub fn norgb_effect_label(lang: Lang, id: u8) -> &'static str {

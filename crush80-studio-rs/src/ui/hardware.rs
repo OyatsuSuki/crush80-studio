@@ -41,7 +41,21 @@ impl Crush80App {
 
         ui.add_space(14.0);
 
-        if self.status.connected && !self.hw.prosuite_supported {
+        if !self.can_via_write() {
+            egui::Frame::none()
+                .fill(Color32::from_rgba_unmultiplied(245, 158, 11, 18))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(245, 158, 11, 110)))
+                .rounding(Rounding::same(8.0))
+                .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                .show(ui, |ui| {
+                    ui.label(
+                        RichText::new(s.offline_readonly_hint)
+                            .size(12.0)
+                            .color(ACCENT),
+                    );
+                });
+            ui.add_space(10.0);
+        } else if !self.hw.prosuite_supported {
             egui::Frame::none()
                 .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 18))
                 .stroke(Stroke::new(1.0_f32, CYAN))
@@ -60,6 +74,7 @@ impl Crush80App {
         ui.add_enabled_ui(can_ember, |ui| {
             ui.columns(2, |cols| {
                 card_frame().show(&mut cols[0], |ui| {
+                    ui.set_min_height(332.0);
                     ui.label(RichText::new(s.perf_card).size(14.5).strong().color(TEXT_PRI));
                     ui.add_space(14.0);
 
@@ -193,6 +208,7 @@ impl Crush80App {
                 });
 
                 card_frame().show(&mut cols[1], |ui| {
+                    ui.set_min_height(332.0);
                     ui.label(
                         RichText::new(s.ambient_card)
                             .size(14.5)
