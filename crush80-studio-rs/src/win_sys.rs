@@ -12,12 +12,16 @@ use std::ptr::{null, null_mut};
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, BOOL, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, HANDLE, HINSTANCE,
-    HWND, LPARAM,
+    HWND, LPARAM, RECT,
+};
+use windows_sys::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows_sys::Win32::System::Threading::{CreateMutexW, GetCurrentProcessId};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, FindWindowW, GetWindowTextW, GetWindowThreadProcessId, SetForegroundWindow,
-    ShowWindow, SW_RESTORE, SW_SHOW,
+    EnumWindows, FindWindowW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
+    SetForegroundWindow, SetWindowPos, ShowWindow, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
+    SW_RESTORE, SW_SHOW,
 };
 
 const APP_WINDOW_TITLE: &str = "Crush 80 Studio";
@@ -89,6 +93,70 @@ pub fn find_own_main_window(title_prefix: &str, exclude_hwnd: HWND) -> HWND {
         };
         EnumWindows(Some(enum_own_win_proc), &mut ctx as *mut _ as LPARAM);
         ctx.found
+    }
+}
+
+/// Computes the top-left position that centers a `win_w x win_h` window inside the given work area,
+/// clamping to `work_left` / `work_top` so the titlebar never goes off-screen on compact displays.
+pub fn compute_centered_pos(
+    work_left: i32,
+    work_top: i32,
+    work_right: i32,
+    work_bottom: i32,
+    win_w: i32,
+    win_h: i32,
+) -> (i32, i32) {
+    let work_w = (work_right - work_left).max(0);
+    let work_h = (work_bottom - work_top).max(0);
+    let x = work_left + ((work_w - win_w) / 2).max(0);
+    let y = work_top + ((work_h - win_h) / 2).max(0);
+    (x, y)
+}
+
+/// Centers the current process's `"Crush 80 Studio"` main window within its monitor's usable
+/// work area (`rcWork`, excluding the Windows taskbar) in physical DPI-accurate pixels.
+pub fn center_own_main_window() -> bool {
+    unsafe {
+        let hwnd = find_own_main_window(APP_WINDOW_TITLE, null_mut());
+        if hwnd.is_null() {
+            return false;
+        }
+        let mut wr: RECT = zeroed();
+        if GetWindowRect(hwnd, &mut wr) == 0 {
+            return false;
+        }
+        let win_w = wr.right - wr.left;
+        let win_h = wr.bottom - wr.top;
+        if win_w <= 0 || win_h <= 0 {
+            return false;
+        }
+        let hmon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        if hmon.is_null() {
+            return false;
+        }
+        let mut mi: MONITORINFO = zeroed();
+        mi.cbSize = size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(hmon, &mut mi) == 0 {
+            return false;
+        }
+        let work = mi.rcWork;
+        let (x, y) = compute_centered_pos(
+            work.left,
+            work.top,
+            work.right,
+            work.bottom,
+            win_w,
+            win_h,
+        );
+        SetWindowPos(
+            hwnd,
+            null_mut(),
+            x,
+            y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        ) != 0
     }
 }
 
@@ -841,5 +909,18 @@ mod tests {
         assert!(pressed.is_empty());
         assert_eq!(released, vec![0xE0]);
         assert_eq!(next, none);
+    }
+
+    #[test]
+    fn test_compute_centered_pos_respects_work_area_and_clamps() {
+        // 2560x1440 monitor with 48px bottom taskbar -> work area 2560x1392; window 1860x1215
+        let (x, y) = compute_centered_pos(0, 0, 2560, 1392, 1860, 1215);
+        assert_eq!(x, 350);
+        assert_eq!(y, 88);
+
+        // Smaller display where window exceeds work area -> clamps cleanly to work origin
+        let (cx, cy) = compute_centered_pos(0, 40, 1280, 760, 1400, 900);
+        assert_eq!(cx, 0);
+        assert_eq!(cy, 40);
     }
 }

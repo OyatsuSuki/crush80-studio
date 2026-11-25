@@ -96,6 +96,7 @@ pub struct Crush80App {
     // System tray & Windows startup
     pub tray: Arc<TrayState>,
     pub start_minimized_pending: bool,
+    pub startup_center_pending: bool,
     pub autostart_enabled: bool,
     // Keymap
     pub layers: [[u16; 128]; 4],
@@ -220,6 +221,7 @@ impl Crush80App {
             lang,
         );
 
+        let start_minimized_pending = win_sys::has_minimized_arg();
         let mut app = Self {
             hid,
             worker,
@@ -232,7 +234,8 @@ impl Crush80App {
             picker_tab: PickerTab::ProBuilder,
             start_time: Instant::now(),
             tray,
-            start_minimized_pending: win_sys::has_minimized_arg(),
+            start_minimized_pending,
+            startup_center_pending: true,
             autostart_enabled: win_sys::is_autostart_enabled(),
             layers: FACTORY_KEYMAP,
             current_layer: 0,
@@ -690,6 +693,13 @@ impl eframe::App for Crush80App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+
+        if self.startup_center_pending
+            && !self.tray.window_hidden.load(Ordering::Relaxed)
+            && win_sys::center_own_main_window()
+        {
+            self.startup_center_pending = false;
         }
 
         // Optional built-in OpenGL framebuffer screenshot capture (--capture-dir <dir>)
@@ -1173,6 +1183,8 @@ fn main() -> eframe::Result<()> {
             .with_icon(build_app_icon())
             .with_inner_size([1240.0, 810.0])
             .with_min_inner_size([1060.0, 720.0]),
+        centered: true,
+        persist_window: false,
         ..Default::default()
     };
     eframe::run_native(
